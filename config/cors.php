@@ -21,7 +21,7 @@ return [
 
     'allowed_origins' => [
        'http://localhost:3000',
-    'http://127.0.0.1:3000',
+        'http://127.0.0.1:3000',
        "https://frontend-react-zdh9p94ks-yin-khins-projects.vercel.app",
        'https://frontend-react-sable.vercel.app', // Add production domain
        'https://frontend-react-git-main-yin-khins-projects.vercel.app', // optional
