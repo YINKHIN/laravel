@@ -20,28 +20,10 @@ return [
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'http://localhost:3002',
-        'http://localhost:3003',
-        'http://localhost:3004',
-        'http://localhost:3005',
-        'http://localhost:3006',
-        'http://localhost:3007', // Added for our new React dev server
-        'http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:3001',
-        'http://127.0.0.1:3002',
-        'http://127.0.0.1:3003',
-        'http://127.0.0.1:3004',
-        'http://127.0.0.1:3005',
-        'http://127.0.0.1:3006',
-        'http://127.0.0.1:3007', // Added for our new React dev server
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:5174',
-        'http://127.0.0.1:5175',
+       'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://frontend-react-sable.vercel.app', // Add production domain
+    'https://frontend-react-git-main-yin-khins-projects.vercel.app', // optional
     ],
 
     'allowed_origins_patterns' => [],
@@ -52,6 +34,6 @@ return [
 
     'max_age' => 0,
 
-    'supports_credentials' => false,
+    'supports_credentials' => true,
 
 ];
