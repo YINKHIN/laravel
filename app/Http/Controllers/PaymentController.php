@@ -62,6 +62,11 @@ class PaymentController extends Controller
      */
     public function store(Request $request)
     {
+        \Log::info('Payment creation started', [
+            'request_data' => $request->all(),
+            'user_id' => auth()->id()
+        ]);
+
         $validator = Validator::make($request->all(), [
             'pay_date' => 'required|date',
             'staff_id' => 'required|exists:staffs,id',
@@ -71,6 +76,11 @@ class PaymentController extends Controller
         ]);
 
         if ($validator->fails()) {
+            \Log::error('Payment validation failed', [
+                'errors' => $validator->errors(),
+                'request_data' => $request->all()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Validation Error',
@@ -81,9 +91,18 @@ class PaymentController extends Controller
         DB::beginTransaction();
 
         try {
+            \Log::info('Payment creation transaction started');
+
             // Get staff and order info
             $staff = Staff::find($request->staff_id);
             $order = Order::find($request->ord_code);
+
+            \Log::info('Retrieved staff and order', [
+                'staff_id' => $request->staff_id,
+                'order_id' => $request->ord_code,
+                'staff_exists' => !is_null($staff),
+                'order_exists' => !is_null($order)
+            ]);
 
             // Debug logging
             \Log::info('Payment creation attempt', [
@@ -93,11 +112,47 @@ class PaymentController extends Controller
                 'requested_deposit' => $request->deposit
             ]);
 
+            // Check if order exists
+            if (!$order) {
+                \Log::error('Order not found for payment creation', [
+                    'order_id' => $request->ord_code
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Order not found'
+                ], 422);
+            }
+
+            // Check if staff exists
+            if (!$staff) {
+                \Log::error('Staff not found for payment creation', [
+                    'staff_id' => $request->staff_id
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Staff not found'
+                ], 422);
+            }
+
             // Always use the actual order total, ignore request total
             $actualOrderTotal = $order->total;
 
+            \Log::info('Order total information', [
+                'order_id' => $request->ord_code,
+                'actual_order_total' => $actualOrderTotal,
+                'requested_total' => $request->total
+            ]);
+
             // Check if this individual deposit exceeds the order total
             if ($request->deposit > $actualOrderTotal) {
+                \Log::error('Deposit exceeds order total', [
+                    'order_id' => $request->ord_code,
+                    'deposit' => $request->deposit,
+                    'order_total' => $actualOrderTotal
+                ]);
+                
                 return response()->json([
                     'success' => false,
                     'message' => 'Deposit amount ($' . number_format($request->deposit, 2) . ') cannot exceed order total ($' . number_format($actualOrderTotal, 2) . ')'
@@ -124,11 +179,24 @@ class PaymentController extends Controller
                 
                 // If remaining is very small (less than 1 cent), consider it fully paid
                 if ($remainingAllowed < 0.01) {
+                    \Log::error('Order already fully paid', [
+                        'order_id' => $request->ord_code,
+                        'existing_payments' => $existingPayments,
+                        'order_total' => $actualOrderTotal
+                    ]);
+                    
                     return response()->json([
                         'success' => false,
                         'message' => 'Order is already fully paid. Total paid: $' . number_format($existingPayments, 2) . ', Order total: $' . number_format($actualOrderTotal, 2)
                     ], 422);
                 }
+                
+                \Log::error('Payment would exceed order total', [
+                    'order_id' => $request->ord_code,
+                    'total_with_new' => $totalDepositsWithNew,
+                    'order_total' => $actualOrderTotal,
+                    'remaining_allowed' => $remainingAllowed
+                ]);
                 
                 return response()->json([
                     'success' => false,
@@ -138,6 +206,16 @@ class PaymentController extends Controller
 
             // Calculate remaining amount
             $remain = max(0, $actualOrderTotal - $totalDepositsWithNew);
+
+            \Log::info('Creating payment record', [
+                'pay_date' => $request->pay_date,
+                'staff_id' => $request->staff_id,
+                'full_name' => $staff->full_name,
+                'ord_code' => $request->ord_code,
+                'total' => $actualOrderTotal,
+                'deposit' => $request->deposit,
+                'remain' => $remain
+            ]);
 
             // Create payment record
             $payment = Payment::create([
@@ -150,10 +228,22 @@ class PaymentController extends Controller
                 'remain' => $remain,
             ]);
 
+            \Log::info('Payment record created', [
+                'payment_id' => $payment->id
+            ]);
+
             // Update remaining amounts for all payments of this order
             $this->updateOrderPaymentRemains($request->ord_code);
+            
+            \Log::info('Order payment remains updated', [
+                'order_id' => $request->ord_code
+            ]);
 
             DB::commit();
+
+            \Log::info('Payment creation transaction committed', [
+                'payment_id' => $payment->id
+            ]);
 
             $payment->load(['staff', 'order.customer']);
 
@@ -168,6 +258,13 @@ class PaymentController extends Controller
             ], 201);
         } catch (\Exception $e) {
             DB::rollback();
+            \Log::error('Payment creation failed with exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
+                'user_id' => auth()->id()
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to create payment: ' . $e->getMessage()

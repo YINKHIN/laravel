@@ -2,1104 +2,637 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Customer;
-use App\Models\Import;
-use App\Models\ImportDetail;
-use App\Models\Order;
-use App\Models\OrderDetail;
-use App\Models\Product;
-use App\Models\Staff;
-use App\Models\Supplier;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use PhpOffice\PhpWord\IOFactory;
-use PhpOffice\PhpWord\PhpWord;
+use Illuminate\Http\Response;
+use App\Models\Import;
+use App\Models\Order;
+use App\Models\Payment;
+use App\Models\Product;
+use Carbon\Carbon;
+use Barryvdh\DomPDF\Facade\Pdf;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
-use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Writer\Xls;
 
 class ReportController extends Controller
 {
-    /**
-     * Get import report with filters
-     */
-    public function importReport(Request $request)
+    // Import Reports
+    public function getImportReport(Request $request)
     {
-        $query = Import::with(['staff', 'supplier', 'importDetails.product'])
-            ->join('import_details', 'imports.id', '=', 'import_details.imp_code')
-            ->join('staffs', 'imports.staff_id', '=', 'staffs.id')
-            ->join('suppliers', 'imports.sup_id', '=', 'suppliers.id')
-            ->join('products', 'import_details.pro_code', '=', 'products.id')
-            ->select(
-                'imports.id as import_id',
-                'imports.imp_date',
-                'staffs.full_name as staff_name',
-                'suppliers.supplier as supplier_name',
-                'products.pro_name as product_name',
-                'import_details.qty',
-                'import_details.price as unit_price',
-                'import_details.amount',
-                'imports.total as import_total',
-                'products.batch_number as batch_number',
-                'products.expiration_date as expiration_date'
-            );
-
-        // Apply filters
-        if ($request->has('staff_id')) {
-            $query->where('imports.staff_id', $request->staff_id);
-        }
-        if ($request->has('supplier_id')) {
-            $query->where('imports.sup_id', $request->supplier_id);
-        }
-        if ($request->has('product_id')) {
-            $query->where('import_details.pro_code', $request->product_id);
-        }
-        if ($request->has('date_from')) {
-            $query->where('imports.imp_date', '>=', $request->date_from);
-        }
-        if ($request->has('date_to')) {
-            $query->where('imports.imp_date', '<=', $request->date_to);
-        }
-
-        $reports = $query->orderBy('imports.imp_date', 'desc')->paginate(50);
-
+        // Use the same data processing logic as export methods for consistency
+        $imports = $this->getImportData($request);
+        
         return response()->json([
-            'success' => true,
-            'data' => $reports
+            'status' => 'success',
+            'data' => $imports
         ]);
     }
-
-    /**
-     * Get sales report with filters
-     */
-    public function salesReport(Request $request)
+    
+    public function getImportSummary(Request $request)
     {
-        $query = Order::with(['staff', 'customer', 'orderDetails.product'])
-            ->join('order_details', 'orders.id', '=', 'order_details.ord_code')
-            ->join('staffs', 'orders.staff_id', '=', 'staffs.id')
-            ->join('customers', 'orders.cus_id', '=', 'customers.id')
-            ->join('products', 'order_details.pro_code', '=', 'products.id')
-            ->select(
-                'orders.id as order_id',
-                'orders.ord_date',
-                'staffs.full_name as staff_name',
-                'customers.cus_name as customer_name',
-                'products.pro_name as product_name',
-                'order_details.qty',
-                'order_details.price as unit_price',
-                'order_details.amount',
-                'orders.total as order_total'
-            );
-
-        // Apply filters
-        if ($request->has('staff_id')) {
-            $query->where('orders.staff_id', $request->staff_id);
+        $query = Import::query();
+        
+        if ($request->date_from) {
+            $query->whereDate('imp_date', '>=', $request->date_from);
         }
-        if ($request->has('customer_id')) {
-            $query->where('orders.cus_id', $request->customer_id);
+        
+        if ($request->date_to) {
+            $query->whereDate('imp_date', '<=', $request->date_to);
         }
-        if ($request->has('product_id')) {
-            $query->where('order_details.pro_code', $request->product_id);
-        }
-        if ($request->has('date_from')) {
-            $query->where('orders.ord_date', '>=', $request->date_from);
-        }
-        if ($request->has('date_to')) {
-            $query->where('orders.ord_date', '<=', $request->date_to);
-        }
-
-        $reports = $query->orderBy('orders.ord_date', 'desc')->paginate(50);
-
+        
+        $totalImports = $query->count();
+        $totalAmount = $query->sum('total');
+        
         return response()->json([
-            'success' => true,
-            'data' => $reports
+            'status' => 'success',
+            'data' => [
+                'total_imports' => $totalImports,
+                'total_amount' => $totalAmount,
+                'average_amount' => $totalImports > 0 ? $totalAmount / $totalImports : 0,
+            ]
         ]);
     }
-
-    /**
-     * Get import summary
-     */
-    public function importSummary(Request $request)
+    
+    // Sales Reports
+    public function getSalesReport(Request $request)
     {
-        $query = ImportDetail::join('imports', 'import_details.imp_code', '=', 'imports.id');
-
-        if ($request->has('date_from')) {
-            $query->where('imports.imp_date', '>=', $request->date_from);
-        }
-        if ($request->has('date_to')) {
-            $query->where('imports.imp_date', '<=', $request->date_to);
-        }
-
-        $summary = $query->selectRaw('
-            COUNT(DISTINCT imports.id) as total_imports,
-            SUM(import_details.qty) as total_qty,
-            SUM(import_details.amount) as total_amount
-        ')->first();
-
+        // Log the request parameters for debugging
+        \Log::info('Sales Report Request Parameters:', $request->all());
+        
+        // Use the same data processing logic as export methods for consistency
+        $orders = $this->getSalesData($request);
+        
+        // Log the result for debugging
+        \Log::info('Sales Report Data Count:', ['count' => count($orders)]);
+        \Log::info('Sales Report Sample Data:', array_slice($orders, 0, 5));
+        
         return response()->json([
-            'success' => true,
-            'data' => $summary
+            'status' => 'success',
+            'data' => $orders
         ]);
     }
-
-    /**
-     * Get sales summary
-     */
-    public function salesSummary(Request $request)
+    
+    public function getSalesSummary(Request $request)
     {
-        $query = OrderDetail::join('orders', 'order_details.ord_code', '=', 'orders.id');
-
-        if ($request->has('date_from')) {
-            $query->where('orders.ord_date', '>=', $request->date_from);
+        $query = Order::query();
+        
+        if ($request->date_from) {
+            $query->whereDate('ord_date', '>=', $request->date_from);
         }
-        if ($request->has('date_to')) {
-            $query->where('orders.ord_date', '<=', $request->date_to);
+        
+        if ($request->date_to) {
+            $query->whereDate('ord_date', '<=', $request->date_to);
         }
-
-        $summary = $query->selectRaw('
-            COUNT(DISTINCT orders.id) as total_orders,
-            SUM(order_details.qty) as total_qty,
-            SUM(order_details.amount) as total_amount
-        ')->first();
-
+        
+        $totalOrders = $query->count();
+        $totalRevenue = $query->sum('total');
+        
         return response()->json([
-            'success' => true,
-            'data' => $summary
+            'status' => 'success',
+            'data' => [
+                'total_orders' => $totalOrders,
+                'total_revenue' => $totalRevenue,
+                'average_order_value' => $totalOrders > 0 ? $totalRevenue / $totalOrders : 0,
+            ]
         ]);
     }
-
-    /**
-     * Export import report to Excel (CSV format)
-     */
+    
+    // Export Functions
     public function exportImportExcel(Request $request)
     {
-        $data = $this->getImportReportData($request);
-
-        $filename = 'import_report_' . date('Y_m_d') . '.csv';
-
-        $headers = [
-            'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-        ];
-
-        $callback = function () use ($data) {
-            // Imported Goods Management Report
-            $file = fopen('php://output', 'w');
-            fputcsv($file, ['Import ID', 'Date', 'Staff', 'Supplier', 'Product', 'Qty', 'Unit Price', 'Amount', 'Total', 'Batch Number', 'Expiration Date']);
-
-            foreach ($data as $row) {
-                fputcsv($file, [
-                    $row->import_id,
-                    $row->imp_date,
-                    $row->staff_name,
-                    $row->supplier_name,
-                    $row->product_name,
-                    $row->qty,
-                    $row->unit_price,
-                    $row->amount,
-                    $row->import_total,
-                    $row->batch_number ?? 'N/A',
-                    $row->expiration_date ? date('Y-m-d', strtotime($row->expiration_date)) : 'N/A'
-                ]);
-            }
-
-            fclose($file);
-        };
-
-        return response()->stream($callback, 200, $headers);
+        \Log::info('Export Import Excel called with params:', $request->all());
+        
+        $imports = $this->getImportData($request);
+        
+        \Log::info('Export Import Excel data count:', ['count' => count($imports)]);
+        \Log::info('Export Import Excel sample data:', array_slice($imports, 0, 3));
+        
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Headers
+        $sheet->setCellValue('A1', 'Import Report');
+        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d'));
+        $sheet->setCellValue('A3', 'Total Records: ' . count($imports));
+        $sheet->setCellValue('A4', 'Total Amount: $' . number_format(array_sum(array_column($imports, 'amount')), 2));
+        
+        // Table headers - MATCHING PDF TEMPLATE
+        $headers = ['ID', 'Date', 'Staff', 'Supplier', 'Product Name', 'Qty', 'Amount', 'Batch Number', 'Expiration Date', 'Status'];
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '6', $header);
+            $col++;
+        }
+        
+        // Data
+        $row = 7;
+        foreach ($imports as $import) {
+            $sheet->setCellValue('A' . $row, $import['id']);
+            $sheet->setCellValue('B' . $row, $import['imp_date']);
+            $sheet->setCellValue('C' . $row, $import['staff_name']);
+            $sheet->setCellValue('D' . $row, $import['supplier_name']);
+            $sheet->setCellValue('E' . $row, $import['product_name']);
+            $sheet->setCellValue('F' . $row, $import['qty']);
+            $sheet->setCellValue('G' . $row, $import['amount']);
+            $sheet->setCellValue('H' . $row, $import['batch_number']);
+            $sheet->setCellValue('I' . $row, $import['expiration_date']);
+            $sheet->setCellValue('J' . $row, $import['status']);
+            $row++;
+        }
+        
+        $writer = new Xls($spreadsheet);
+        
+        $filename = 'import_report_' . now()->format('Y-m-d') . '.xls';
+        $temp_file = tempnam(sys_get_temp_dir(), $filename);
+        $writer->save($temp_file);
+        
+        return response()->download($temp_file, $filename)->deleteFileAfterSend(true);
     }
-
-
-    /**
-     * Export import report to Excel (XLSX format)
-     */
+    
     public function exportImportExcelXlsx(Request $request)
     {
-        try {
-            $data = $this->getImportReportData($request);
-            $summary = $this->getImportSummaryData($request);
-
-            $spreadsheet = new Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-
-            // Set document properties
-            $spreadsheet->getProperties()
-                ->setCreator("Imported Goods Management Report")
-                ->setTitle("Import Report")
-                ->setSubject("Import Report Data");
-
-            // Add header
-            $sheet->setCellValue('A1', 'Imported Goods Management Report');
-            $sheet->setCellValue('A2', 'Import Report');
-            $sheet->setCellValue('A3', 'Generated on: ' . date('Y-m-d'));
-
-            // Add summary data
-            $sheet->setCellValue('A5', 'Summary:');
-            $sheet->setCellValue('A6', 'Total Imports:');
-            $sheet->setCellValue('B6', $summary->total_imports ?? 0);
-            $sheet->setCellValue('A7', 'Total Quantity:');
-            $sheet->setCellValue('B7', $summary->total_qty ?? 0);
-            $sheet->setCellValue('A8', 'Total Amount:');
-            $sheet->setCellValue('B8', '$' . number_format($summary->total_amount ?? 0, 2));
-
-            // Add table headers
-            $row = 20;
-            $sheet->setCellValue('A' . $row, 'Import ID');
-            $sheet->setCellValue('B' . $row, 'Date');
-            $sheet->setCellValue('C' . $row, 'Staff');
-            $sheet->setCellValue('D' . $row, 'Supplier');
-            $sheet->setCellValue('E' . $row, 'Product');
-            $sheet->setCellValue('F' . $row, 'Qty');
-            $sheet->setCellValue('G' . $row, 'Unit Price');
-            $sheet->setCellValue('H' . $row, 'Amount');
-            $sheet->setCellValue('I' . $row, 'Batch Number');
-            $sheet->setCellValue('J' . $row, 'Expiration Date');
-
-            // Style the header row
-            $sheet->getStyle('A' . $row . ':J' . $row)->getFont()->setBold(true);
-            $sheet->getStyle('A' . $row . ':J' . $row)->getFill()
-                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
-                ->getStartColor()->setARGB('FFD3D3D3');
-
-            // Add data rows
+        \Log::info('Export Import Excel XLSX called with params:', $request->all());
+        
+        $imports = $this->getImportData($request);
+        
+        \Log::info('Export Import Excel XLSX data count:', ['count' => count($imports)]);
+        \Log::info('Export Import Excel XLSX sample data:', array_slice($imports, 0, 3));
+        
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Headers
+        $sheet->setCellValue('A1', 'Import Report');
+        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d'));
+        $sheet->setCellValue('A3', 'Total Records: ' . count($imports));
+        $sheet->setCellValue('A4', 'Total Amount: $' . number_format(array_sum(array_column($imports, 'amount')), 2));
+        
+        // Table headers - MATCHING PDF TEMPLATE
+        $headers = ['ID', 'Date', 'Staff', 'Supplier', 'Product Name', 'Qty', 'Amount', 'Batch Number', 'Expiration Date', 'Status'];
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '6', $header);
+            $col++;
+        }
+        
+        // Data
+        $row = 7;
+        foreach ($imports as $import) {
+            $sheet->setCellValue('A' . $row, $import['id']);
+            $sheet->setCellValue('B' . $row, $import['imp_date']);
+            $sheet->setCellValue('C' . $row, $import['staff_name']);
+            $sheet->setCellValue('D' . $row, $import['supplier_name']);
+            $sheet->setCellValue('E' . $row, $import['product_name']);
+            $sheet->setCellValue('F' . $row, $import['qty']);
+            $sheet->setCellValue('G' . $row, $import['amount']);
+            $sheet->setCellValue('H' . $row, $import['batch_number']);
+            $sheet->setCellValue('I' . $row, $import['expiration_date']);
+            $sheet->setCellValue('J' . $row, $import['status']);
             $row++;
-            foreach ($data as $item) {
-                $sheet->setCellValue('A' . $row, $item->import_id);
-                $sheet->setCellValue('B' . $row, $item->imp_date);
-                $sheet->setCellValue('C' . $row, $item->staff_name);
-                $sheet->setCellValue('D' . $row, $item->supplier_name);
-                $sheet->setCellValue('E' . $row, $item->product_name);
-                $sheet->setCellValue('F' . $row, $item->qty);
-                $sheet->setCellValue('G' . $row, $item->unit_price);
-                $sheet->setCellValue('H' . $row, $item->amount);
-                $sheet->setCellValue('I' . $row, $item->batch_number ?? 'N/A');
-                $sheet->setCellValue('J' . $row, $item->expiration_date ? date('Y-m-d', strtotime($item->expiration_date)) : 'N/A');
-                $row++;
-            }
-
-            // Auto-size columns
-            foreach (range('A', 'J') as $col) {
-                $sheet->getColumnDimension($col)->setAutoSize(true);
-            }
-
-            // Set number formats
-            $sheet->getStyle('G2:H' . ($row - 1))->getNumberFormat()->setFormatCode('$#,##0.00');
-            $sheet->getStyle('F2:F' . ($row - 1))->getNumberFormat()->setFormatCode('#,##0');
-
-            $filename = 'import_report_' . date('Y_m_d') . '.xlsx';
-
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
-
-            $writer = new Xlsx($spreadsheet);
-            $writer->save('php://output');
-            exit;
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate Excel report: ' . $e->getMessage()
-            ], 500);
         }
+        
+        $writer = new Xlsx($spreadsheet);
+        
+        $filename = 'import_report_' . now()->format('Y-m-d') . '.xlsx';
+        $temp_file = tempnam(sys_get_temp_dir(), $filename);
+        $writer->save($temp_file);
+        
+        return response()->download($temp_file, $filename)->deleteFileAfterSend(true);
     }
-
-    /**
-     * Export sales report to Excel (CSV format)
-     */
-    public function exportSalesExcel(Request $request)
-    {
-        $data = $this->getSalesReportData($request);
-
-        $filename = 'sales_report_' . date('Y_m_d') . '.csv';
-
-        $headers = [
-            'Content-Type' => 'text/csv',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-        ];
-
-        $callback = function () use ($data) {
-            $file = fopen('php://output', 'w');
-            fputcsv($file, ['Order ID', 'Date', 'Staff', 'Customer', 'Product', 'Qty', 'Unit Price', 'Amount', 'Total']);
-
-            foreach ($data as $row) {
-                fputcsv($file, [
-                    $row->order_id,
-                    $row->ord_date,
-                    $row->staff_name,
-                    $row->customer_name,
-                    $row->product_name,
-                    $row->qty,
-                    $row->unit_price,
-                    $row->amount,
-                    $row->order_total
-                ]);
-            }
-
-            fclose($file);
-        };
-
-        return response()->stream($callback, 200, $headers);
-    }
-
-    /**
-     * Export sales report to Excel (XLSX format)
-     */
-    public function exportSalesExcelXlsx(Request $request)
-    {
-        try {
-            $data = $this->getSalesReportData($request);
-            $summary = $this->getSalesSummaryData($request);
-
-            $spreadsheet = new Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-
-            // Set document properties
-            $spreadsheet->getProperties()
-                ->setCreator("Stock Sales Management Report")
-                ->setTitle("Sales Report")
-                ->setSubject("Sales Report Data");
-
-            // Add header
-            $sheet->setCellValue('A1', 'Stock Sales Management Report');
-            $sheet->setCellValue('A2', 'Sales Report');
-            $sheet->setCellValue('A3', 'Generated on: ' . date('Y-m-d'));
-
-            // Add summary data
-            $sheet->setCellValue('A5', 'Summary:');
-            $sheet->setCellValue('A6', 'Total Orders:');
-            $sheet->setCellValue('B6', $summary->total_orders ?? 0);
-            $sheet->setCellValue('A7', 'Total Quantity:');
-            $sheet->setCellValue('B7', $summary->total_qty ?? 0);
-            $sheet->setCellValue('A8', 'Total Amount:');
-            $sheet->setCellValue('B8', '$' . number_format($summary->total_amount ?? 0, 2));
-
-            // Add table headers
-            $row = 10;
-            $sheet->setCellValue('A' . $row, 'Order ID');
-            $sheet->setCellValue('B' . $row, 'Date');
-            $sheet->setCellValue('C' . $row, 'Staff');
-            $sheet->setCellValue('D' . $row, 'Customer');
-            $sheet->setCellValue('E' . $row, 'Product');
-            $sheet->setCellValue('F' . $row, 'Qty');
-            $sheet->setCellValue('G' . $row, 'Unit Price');
-            $sheet->setCellValue('H' . $row, 'Amount');
-
-            // Style the header row
-            $sheet->getStyle('A' . $row . ':H' . $row)->getFont()->setBold(true);
-            $sheet->getStyle('A' . $row . ':H' . $row)->getFill()
-                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
-                ->getStartColor()->setARGB('FFD3D3D3');
-
-            // Add data rows
-            $row++;
-            foreach ($data as $item) {
-                $sheet->setCellValue('A' . $row, $item->order_id);
-                $sheet->setCellValue('B' . $row, $item->ord_date);
-                $sheet->setCellValue('C' . $row, $item->staff_name);
-                $sheet->setCellValue('D' . $row, $item->customer_name);
-                $sheet->setCellValue('E' . $row, $item->product_name);
-                $sheet->setCellValue('F' . $row, $item->qty);
-                $sheet->setCellValue('G' . $row, $item->unit_price);
-                $sheet->setCellValue('H' . $row, $item->amount);
-                $row++;
-            }
-
-            // Auto-size columns
-            foreach (range('A', 'H') as $col) {
-                $sheet->getColumnDimension($col)->setAutoSize(true);
-            }
-
-            // Set number formats
-            $sheet->getStyle('G2:H' . ($row - 1))->getNumberFormat()->setFormatCode('$#,##0.00');
-            $sheet->getStyle('F2:F' . ($row - 1))->getNumberFormat()->setFormatCode('#,##0');
-
-            $filename = 'sales_report_' . date('Y_m_d') . '.xlsx';
-
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
-
-            $writer = new Xlsx($spreadsheet);
-            $writer->save('php://output');
-            exit;
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate Excel report: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    private function getImportReportData($request)
-    {
-        $query = DB::table('imports')
-            ->join('import_details', 'imports.id', '=', 'import_details.imp_code')
-            ->join('staffs', 'imports.staff_id', '=', 'staffs.id')
-            ->join('suppliers', 'imports.sup_id', '=', 'suppliers.id')
-            ->join('products', 'import_details.pro_code', '=', 'products.id')
-            ->select(
-                'imports.id as import_id',
-                'imports.imp_date',
-                'staffs.full_name as staff_name',
-                'suppliers.supplier as supplier_name',
-                'products.pro_name as product_name',
-                'import_details.qty',
-                'import_details.price as unit_price',
-                'import_details.amount',
-                'imports.total as import_total',
-                'products.batch_number as batch_number',
-                'products.expiration_date as expiration_date'
-            );
-
-        // Apply same filters as report
-        if ($request->has('staff_id')) {
-            $query->where('imports.staff_id', $request->staff_id);
-        }
-        if ($request->has('supplier_id')) {
-            $query->where('imports.sup_id', $request->supplier_id);
-        }
-        if ($request->has('product_id')) {
-            $query->where('import_details.pro_code', $request->product_id);
-        }
-        if ($request->has('date_from')) {
-            $query->where('imports.imp_date', '>=', $request->date_from);
-        }
-        if ($request->has('date_to')) {
-            $query->where('imports.imp_date', '<=', $request->date_to);
-        }
-
-        return $query->orderBy('imports.imp_date', 'desc')->get();
-    }
-
-    private function getSalesReportData($request)
-    {
-        $query = DB::table('orders')
-            ->join('order_details', 'orders.id', '=', 'order_details.ord_code')
-            ->join('staffs', 'orders.staff_id', '=', 'staffs.id')
-            ->join('customers', 'orders.cus_id', '=', 'customers.id')
-            ->join('products', 'order_details.pro_code', '=', 'products.id')
-            ->select(
-                'orders.id as order_id',
-                'orders.ord_date',
-                'staffs.full_name as staff_name',
-                'customers.cus_name as customer_name',
-                'products.pro_name as product_name',
-                'order_details.qty',
-                'order_details.price as unit_price',
-                'order_details.amount',
-                'orders.total as order_total'
-            );
-
-        // Apply same filters as report
-        if ($request->has('staff_id')) {
-            $query->where('orders.staff_id', $request->staff_id);
-        }
-        if ($request->has('customer_id')) {
-            $query->where('orders.cus_id', $request->customer_id);
-        }
-        if ($request->has('product_id')) {
-            $query->where('order_details.pro_code', $request->product_id);
-        }
-        if ($request->has('date_from')) {
-            $query->where('orders.ord_date', '>=', $request->date_from);
-        }
-        if ($request->has('date_to')) {
-            $query->where('orders.ord_date', '<=', $request->date_to);
-        }
-
-        return $query->orderBy('orders.ord_date', 'desc')->get();
-    }
-
-
-    /**
-     * Export import report to PDF
-     */
+    
     public function exportImportPdf(Request $request)
     {
-        try {
-            $data = $this->getImportReportData($request);
-            $summary = $this->getImportSummaryData($request);
-
-            if (!$data->count() && !$summary) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No data available for the selected filters.'
-                ], 400);
-            }
-
-            // Ensure proper UTF-8 encoding for Khmer text
-            $data = $data->map(function ($item) {
-                $item->staff_name = mb_convert_encoding($item->staff_name ?? '', 'UTF-8', 'UTF-8');
-                $item->supplier_name = mb_convert_encoding($item->supplier_name ?? '', 'UTF-8', 'UTF-8');
-                $item->product_name = mb_convert_encoding($item->product_name ?? '', 'UTF-8', 'UTF-8');
-                return $item;
-            });
-
-            $summary->total_imports = mb_convert_encoding($summary->total_imports ?? 0, 'UTF-8', 'UTF-8');
-            $summary->total_qty = mb_convert_encoding($summary->total_qty ?? 0, 'UTF-8', 'UTF-8');
-            $summary->total_amount = mb_convert_encoding($summary->total_amount ?? 0, 'UTF-8', 'UTF-8');
-
-            $html = $this->generateImportPdfHtml($data, $summary, $request);
-
-            $pdf = Pdf::loadHTML($html);
-            $pdf->setPaper('A4', 'landscape');
-            $pdf->setOptions(['defaultFont' => 'DejaVu Sans']);
-
-            $filename = 'import_report_' . date('Y_m_d') . '.pdf';
-            return $pdf->download($filename);  // Ensure this returns the file directly
-        } catch (\Exception $e) {
-            \Log::error('PDF Export Error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate PDF: ' . $e->getMessage()
-            ], 500);
+        \Log::info('Export Import PDF called with params:', $request->all());
+        
+        $imports = $this->getImportData($request);
+        
+        \Log::info('Export Import PDF data count:', ['count' => count($imports)]);
+        \Log::info('Export Import PDF sample data:', array_slice($imports, 0, 3));
+        
+        // Ensure proper UTF-8 encoding for PDF
+        $imports = array_map(function($import) {
+            return array_map(function($value) {
+                if (is_string($value)) {
+                    return mb_convert_encoding($value, 'UTF-8', 'UTF-8');
+                }
+                return $value;
+            }, $import);
+        }, $imports);
+        
+        $pdf = Pdf::loadView('reports.import-pdf', [
+            'imports' => $imports,
+            'total_records' => count($imports),
+            'generated_at' => now()->format('Y-m-d H:i:s'),
+            'date_from' => $request->date_from,
+            'date_to' => $request->date_to,
+        ])->setPaper('a4', 'landscape');
+        
+        $filename = 'import_report_' . now()->format('Y-m-d') . '.pdf';
+        
+        return $pdf->download($filename);
+    }
+    
+    // Sales Export Functions
+    public function exportSalesExcel(Request $request)
+    {
+        \Log::info('Export Sales Excel called with params:', $request->all());
+        
+        $sales = $this->getSalesData($request);
+        
+        \Log::info('Export Sales Excel data count:', ['count' => count($sales)]);
+        \Log::info('Export Sales Excel sample data:', array_slice($sales, 0, 3));
+        
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Headers
+        $sheet->setCellValue('A1', 'Sales Report');
+        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d H:i:s'));
+        $sheet->setCellValue('A3', 'Total Records: ' . count($sales));
+        
+        // Table headers - MATCHING PDF TEMPLATE
+        $headers = ['ID', 'Date', 'Customer', 'Staff', 'Product Name', 'Qty', 'Amount', 'Payment Status', 'Status'];
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '5', $header);
+            $col++;
         }
+        
+        // Data
+        $row = 6;
+        foreach ($sales as $sale) {
+            $sheet->setCellValue('A' . $row, $sale['id']);
+            $sheet->setCellValue('B' . $row, $sale['ord_date']);
+            $sheet->setCellValue('C' . $row, $sale['cus_name']);
+            $sheet->setCellValue('D' . $row, $sale['staff_name']);
+            $sheet->setCellValue('E' . $row, $sale['product_name']);
+            $sheet->setCellValue('F' . $row, $sale['qty']);
+            $sheet->setCellValue('G' . $row, $sale['amount']);
+            $sheet->setCellValue('H' . $row, $sale['payment_status']);
+            $sheet->setCellValue('I' . $row, $sale['status']);
+            $row++;
+        }
+        
+        $writer = new Xls($spreadsheet);
+        
+        $filename = 'sales_report_' . now()->format('Y-m-d') . '.xls';
+        $temp_file = tempnam(sys_get_temp_dir(), $filename);
+        $writer->save($temp_file);
+        
+        return response()->download($temp_file, $filename)->deleteFileAfterSend(true);
     }
 
-    /**
-     * Export sales report to PDF
-     */
+    public function exportSalesExcelXlsx(Request $request)
+    {
+        \Log::info('Export Sales Excel XLSX called with params:', $request->all());
+        
+        $sales = $this->getSalesData($request);
+        
+        \Log::info('Export Sales Excel XLSX data count:', ['count' => count($sales)]);
+        \Log::info('Export Sales Excel XLSX sample data:', array_slice($sales, 0, 3));
+        
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Headers
+        $sheet->setCellValue('A1', 'Sales Report');
+        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d H:i:s'));
+        $sheet->setCellValue('A3', 'Total Records: ' . count($sales));
+        
+        // Table headers - MATCHING PDF TEMPLATE
+        $headers = ['ID', 'Date', 'Customer', 'Staff', 'Product Name', 'Qty', 'Amount', 'Payment Status', 'Status'];
+        $col = 'A';
+        foreach ($headers as $header) {
+            $sheet->setCellValue($col . '5', $header);
+            $col++;
+        }
+        
+        // Data
+        $row = 6;
+        foreach ($sales as $sale) {
+            $sheet->setCellValue('A' . $row, $sale['id']);
+            $sheet->setCellValue('B' . $row, $sale['ord_date']);
+            $sheet->setCellValue('C' . $row, $sale['cus_name']);
+            $sheet->setCellValue('D' . $row, $sale['staff_name']);
+            $sheet->setCellValue('E' . $row, $sale['product_name']);
+            $sheet->setCellValue('F' . $row, $sale['qty']);
+            $sheet->setCellValue('G' . $row, $sale['amount']);
+            $sheet->setCellValue('H' . $row, $sale['payment_status']);
+            $sheet->setCellValue('I' . $row, $sale['status']);
+            $row++;
+        }
+        
+        $writer = new Xlsx($spreadsheet);
+        
+        $filename = 'sales_report_' . now()->format('Y-m-d') . '.xlsx';
+        $temp_file = tempnam(sys_get_temp_dir(), $filename);
+        $writer->save($temp_file);
+        
+        return response()->download($temp_file, $filename)->deleteFileAfterSend(true);
+    }
+
     public function exportSalesPdf(Request $request)
     {
-        try {
-            $data = $this->getSalesReportData($request);
-            $summary = $this->getSalesSummaryData($request);
-
-            // Ensure proper UTF-8 encoding for Khmer text
-            $data = $data->map(function ($item) {
-                $item->staff_name = mb_convert_encoding($item->staff_name ?? '', 'UTF-8', 'UTF-8');
-                $item->customer_name = mb_convert_encoding($item->customer_name ?? '', 'UTF-8', 'UTF-8');
-                $item->product_name = mb_convert_encoding($item->product_name ?? '', 'UTF-8', 'UTF-8');
-                return $item;
-            });
-
-            $summary->total_orders = mb_convert_encoding($summary->total_orders ?? 0, 'UTF-8', 'UTF-8');
-            $summary->total_qty = mb_convert_encoding($summary->total_qty ?? 0, 'UTF-8', 'UTF-8');
-            $summary->total_amount = mb_convert_encoding($summary->total_amount ?? 0, 'UTF-8', 'UTF-8');
-
-            $html = $this->generateSalesPdfHtml($data, $summary, $request);
-
-            $pdf = Pdf::loadHTML($html);
-            $pdf->setPaper('A4', 'landscape');
-            $pdf->setOptions(['defaultFont' => 'DejaVu Sans']);
-
-            $filename = 'sales_report_' . date('Y_m_d') . '.pdf';
-
-            return $pdf->download($filename);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate PDF: ' . $e->getMessage()
-            ], 500);
-        }
+        \Log::info('Export Sales PDF called with params:', $request->all());
+        
+        $sales = $this->getSalesData($request);
+        
+        \Log::info('Export Sales PDF data count:', ['count' => count($sales)]);
+        \Log::info('Export Sales PDF sample data:', array_slice($sales, 0, 3));
+        
+        // Ensure proper UTF-8 encoding for PDF
+        $sales = array_map(function($sale) {
+            return array_map(function($value) {
+                if (is_string($value)) {
+                    return mb_convert_encoding($value, 'UTF-8', 'UTF-8');
+                }
+                return $value;
+            }, $sale);
+        }, $sales);
+        
+        $pdf = Pdf::loadView('reports.sales-pdf', [
+            'sales' => $sales,
+            'total_records' => count($sales),
+            'generated_at' => now()->format('Y-m-d H:i:s'),
+            'date_from' => $request->date_from,
+            'date_to' => $request->date_to,
+        ])->setPaper('a4', 'landscape');
+        
+        $filename = 'sales_report_' . now()->format('Y-m-d') . '.pdf';
+        
+        return $pdf->download($filename);
     }
-
-    /**
-     * Export single import record to Word
-     */
-    public function exportSingleImportWord(Request $request)
+    
+    // Helper Methods
+    private function getImportData(Request $request)
     {
-        try {
-            $importId = $request->get('import_id');
-            if (!$importId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Import ID is required'
-                ], 400);
+        $query = Import::with(['supplier', 'staff', 'importDetails.product']);
+        
+        if ($request->date_from) {
+            // Parse date more robustly
+            try {
+                $dateFrom = Carbon::parse($request->date_from)->startOfDay();
+                $query->where('imp_date', '>=', $dateFrom);
+            } catch (\Exception $e) {
+                \Log::warning('Invalid date_from format:', ['date_from' => $request->date_from, 'error' => $e->getMessage()]);
             }
-
-            // Get single import record data
-            $data = DB::table('imports')
-                ->join('import_details', 'imports.id', '=', 'import_details.imp_code')
-                ->join('staffs', 'imports.staff_id', '=', 'staffs.id')
-                ->join('suppliers', 'imports.sup_id', '=', 'suppliers.id')
-                ->join('products', 'import_details.pro_code', '=', 'products.id')
-                ->select(
-                    'imports.id as import_id',
-                    'imports.imp_date',
-                    'staffs.full_name as staff_name',
-                    'suppliers.supplier as supplier_name',
-                    'products.pro_name as product_name',
-                    'import_details.qty',
-                    'import_details.price as unit_price',
-                    'import_details.amount',
-                    'imports.total as import_total'
-                )
-                ->where('imports.id', $importId)
-                ->first();
-
-            if (!$data) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Import record not found'
-                ], 404);
+        }
+        
+        if ($request->date_to) {
+            // Parse date more robustly
+            try {
+                $dateTo = Carbon::parse($request->date_to)->endOfDay();
+                $query->where('imp_date', '<=', $dateTo);
+            } catch (\Exception $e) {
+                \Log::warning('Invalid date_to format:', ['date_to' => $request->date_to, 'error' => $e->getMessage()]);
             }
-
-            $filename = $this->generateImportWordDocument($data, 'import');
-
-            return response()->download($filename)->deleteFileAfterSend(true);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate Word document: ' . $e->getMessage()
-            ], 500);
         }
-    }
-
-    /**
-     * Export single sales record to Word
-     */
-    public function exportSingleSalesWord(Request $request)
-    {
-        try {
-            $orderId = $request->get('order_id');
-            if (!$orderId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Order ID is required'
-                ], 400);
+        
+        if ($request->staff_id) {
+            $query->where('staff_id', $request->staff_id);
+        }
+        
+        if ($request->supplier_id) {
+            $query->where('sup_id', $request->supplier_id);
+        }
+        
+        $imports = $query->orderBy('imp_date', 'desc')->get();
+        
+        // Flatten the data to one row per product
+        $flattenedData = [];
+        foreach ($imports as $import) {
+            foreach ($import->importDetails as $detail) {
+                // Try to get product name from multiple sources
+                $productName = 'Unknown Product';
+                if (!empty($detail->pro_name)) {
+                    $productName = $detail->pro_name;
+                } elseif (!empty($detail->product) && !empty($detail->product->pro_name)) {
+                    $productName = $detail->product->pro_name;
+                } elseif (!empty($detail->product_name)) {
+                    $productName = $detail->product_name;
+                }
+                
+                // Calculate quantity and amount properly
+                $qty = $detail->qty ?? 0;
+                $amount = $detail->amount ?? 0;
+                
+                // If amount is 0 but we have qty and price, calculate it
+                if ($amount == 0 && $qty > 0 && !empty($detail->price)) {
+                    $amount = $qty * $detail->price;
+                }
+                
+                // Get batch number with fallback
+                $batchNumber = 'N/A';
+                if (!empty($detail->batch_number)) {
+                    $batchNumber = $detail->batch_number;
+                }
+                
+                // Get expiration date with fallback
+                $expirationDate = 'N/A';
+                if (!empty($detail->expiration_date)) {
+                    $expirationDate = $detail->expiration_date->format('Y-m-d');
+                }
+                
+                // Get supplier name with multiple fallbacks
+                $supplierName = 'Unknown Supplier';
+                if (!empty($import->supplier_name)) {
+                    $supplierName = $import->supplier_name;
+                } elseif (!empty($import->supplier) && !empty($import->supplier->supplier)) {
+                    $supplierName = $import->supplier->supplier;
+                } elseif (!empty($import->supplier)) {
+                    $supplierName = $import->supplier;
+                }
+                
+                // Get staff name with multiple fallbacks
+                $staffName = 'Unknown Staff';
+                if (!empty($import->staff_name)) {
+                    $staffName = $import->staff_name;
+                } elseif (!empty($import->staff) && !empty($import->staff->full_name)) {
+                    $staffName = $import->staff->full_name;
+                } elseif (!empty($import->full_name)) {
+                    $staffName = $import->full_name;
+                } elseif (!empty($import->staff)) {
+                    $staffName = $import->staff;
+                }
+                
+                $flattenedData[] = [
+                    'id' => $import->id,
+                    'imp_date' => $import->imp_date ? $import->imp_date->format('Y-m-d') : 'N/A',
+                    'staff_name' => $staffName,
+                    'supplier_name' => $supplierName,
+                    'product_name' => $productName,
+                    'qty' => $qty,
+                    'amount' => $amount,
+                    'batch_number' => $batchNumber,
+                    'expiration_date' => $expirationDate,
+                    'status' => $import->status ?? 'completed',
+                ];
             }
+        }
+        
+        return $flattenedData;
+    }
 
-            // Get single sales record data
-            $data = DB::table('orders')
-                ->join('order_details', 'orders.id', '=', 'order_details.ord_code')
-                ->join('staffs', 'orders.staff_id', '=', 'staffs.id')
-                ->join('customers', 'orders.cus_id', '=', 'customers.id')
-                ->join('products', 'order_details.pro_code', '=', 'products.id')
-                ->select(
-                    'orders.id as order_id',
-                    'orders.ord_date',
-                    'staffs.full_name as staff_name',
-                    'customers.cus_name as customer_name',
-                    'products.pro_name as product_name',
-                    'order_details.qty',
-                    'order_details.price as unit_price',
-                    'order_details.amount',
-                    'orders.total as order_total'
-                )
-                ->where('orders.id', $orderId)
-                ->first();
-
-            if (!$data) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Sales record not found'
-                ], 404);
+    private function getSalesData(Request $request)
+    {
+        \Log::info('getSalesData called with params:', $request->all());
+        
+        $query = Order::with(['customer', 'staff', 'orderDetails.product', 'payments']);
+        
+        // Log the raw query for debugging
+        \Log::info('Base query built');
+        
+        if ($request->date_from) {
+            \Log::info('Applying date_from filter:', ['date_from' => $request->date_from]);
+            // Parse date more robustly
+            try {
+                $dateFrom = Carbon::parse($request->date_from)->startOfDay();
+                $query->where('ord_date', '>=', $dateFrom);
+            } catch (\Exception $e) {
+                \Log::warning('Invalid date_from format:', ['date_from' => $request->date_from, 'error' => $e->getMessage()]);
             }
-
-            $filename = $this->generateImportWordDocument($data, 'sales');
-
-            return response()->download($filename)->deleteFileAfterSend(true);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate Word document: ' . $e->getMessage()
-            ], 500);
         }
-    }
-
-    private function getImportSummaryData($request)
-    {
-        $query = ImportDetail::join('imports', 'import_details.imp_code', '=', 'imports.id');
-
-        if ($request->has('date_from')) {
-            $query->where('imports.imp_date', '>=', $request->date_from);
+        
+        if ($request->date_to) {
+            \Log::info('Applying date_to filter:', ['date_to' => $request->date_to]);
+            // Parse date more robustly
+            try {
+                $dateTo = Carbon::parse($request->date_to)->endOfDay();
+                $query->where('ord_date', '<=', $dateTo);
+            } catch (\Exception $e) {
+                \Log::warning('Invalid date_to format:', ['date_to' => $request->date_to, 'error' => $e->getMessage()]);
+            }
         }
-        if ($request->has('date_to')) {
-            $query->where('imports.imp_date', '<=', $request->date_to);
+        
+        if ($request->staff_id) {
+            \Log::info('Applying staff_id filter:', ['staff_id' => $request->staff_id]);
+            $query->where('staff_id', $request->staff_id);
         }
-        if ($request->has('staff_id')) {
-            $query->where('imports.staff_id', $request->staff_id);
+        
+        if ($request->customer_id) {
+            \Log::info('Applying customer_id filter:', ['customer_id' => $request->customer_id]);
+            $query->where('cus_id', $request->customer_id);
         }
-        if ($request->has('supplier_id')) {
-            $query->where('imports.sup_id', $request->supplier_id);
-        }
-        if ($request->has('product_id')) {
-            $query->where('import_details.pro_code', $request->product_id);
-        }
-
-        return $query->selectRaw('
-            COUNT(DISTINCT imports.id) as total_imports,
-            SUM(import_details.qty) as total_qty,
-            SUM(import_details.amount) as total_amount
-        ')->first();
-    }
-
-    private function getSalesSummaryData($request)
-    {
-        $query = OrderDetail::join('orders', 'order_details.ord_code', '=', 'orders.id');
-
-        if ($request->has('date_from')) {
-            $query->where('orders.ord_date', '>=', $request->date_from);
-        }
-        if ($request->has('date_to')) {
-            $query->where('orders.ord_date', '<=', $request->date_to);
-        }
-        if ($request->has('staff_id')) {
-            $query->where('orders.staff_id', $request->staff_id);
-        }
-        if ($request->has('customer_id')) {
-            $query->where('orders.cus_id', $request->customer_id);
-        }
-        if ($request->has('product_id')) {
-            $query->where('order_details.pro_code', $request->product_id);
-        }
-
-        return $query->selectRaw('
-            COUNT(DISTINCT orders.id) as total_orders,
-            SUM(order_details.qty) as total_qty,
-            SUM(order_details.amount) as total_amount
-        ')->first();
-    }
-
-    private function generateImportPdfHtml($data, $summary, $request)
-    {
-        $dateRange = '';
-        if ($request->has('date_from') && $request->has('date_to')) {
-            $dateRange = 'From ' . $request->date_from . ' to ' . $request->date_to;
-        } elseif ($request->has('date_from')) {
-            $dateRange = 'From ' . $request->date_from;
-        } elseif ($request->has('date_to')) {
-            $dateRange = 'To ' . $request->date_to;
-        }
-
-        $html = '
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8">
-        <title>Import Report</title>
-            <style>
-                @font-face {
-                    font-family: "DejaVu Sans";
-                    src: url("http://localhost:8000/fonts/DejaVuSans.ttf") format("truetype");
-                }
-                @font-face {
-                    font-family: "DejaVu Sans";
-                    src: url("http://localhost:8000/fonts/DejaVuSans-Bold.ttf") format("truetype");
-                    font-weight: bold;
-                }
-                body { 
-                    font-family: "DejaVu Sans", sans-serif; 
-                    font-size: 12px; 
-                }
-                .header { text-align: center; margin-bottom: 30px; }
-                .company { font-size: 18px; font-weight: bold; color: #333; }
-                .title { font-size: 16px; font-weight: bold; margin: 10px 0; }
-                .info { margin: 5px 0; color: #666; }
-                .summary { background: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 5px; }
-                .summary-item { display: inline-block; margin-right: 30px; }
-                .summary-label { font-weight: bold; color: #333; }
-                .summary-value { color: #007bff; font-size: 14px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f2f2f2; font-weight: bold; }
-                .amount { text-align: right; }
-                .footer { margin-top: 30px; text-align: center; color: #666; font-size: 10px; }
-                .no-data { text-align: center; color: #888; padding: 20px; }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="company"></div>
-                <div class="title">Stock Import Management Report</div>
-                <div class="info">Created at: ' . date('Y-m-d') . '</div>
-                ' . ($dateRange ? '<div class="info">' . $dateRange . '</div>' : '') . '
-            </div>
+        
+        $orders = $query->orderBy('ord_date', 'desc')->get();
+        
+        \Log::info('Orders fetched:', ['count' => $orders->count()]);
+        
+        // Flatten the data to one row per product
+        $flattenedData = [];
+        foreach ($orders as $order) {
+            \Log::info('Processing order:', ['order_id' => $order->id, 'order_details_count' => $order->orderDetails->count(), 'payments_count' => $order->payments->count()]);
             
-            <div class="summary">
-                <div class="summary-item">
-                    <div class="summary-label">Total Imports:</div>
-                    <div class="summary-value">' . number_format($summary->total_imports ?? 0) . '</div>
-                </div>
-                <div class="summary-item">
-                    <div class="summary-label">Total Quantity:</div>
-                    <div class="summary-value">' . number_format($summary->total_qty ?? 0) . '</div>
-                </div>
-                <div class="summary-item">
-                    <div class="summary-label">Total Amount:</div>
-                    <div class="summary-value">$' . number_format($summary->total_amount ?? 0, 2) . '</div>
-                </div>
-            </div>
-
-            ' . ($data->isEmpty() ? '<div class="no-data">No data available for the selected filters.</div>' : '
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Date</th>
-                        <th>Staffs</th>
-                        <th>Supplier</th>
-                        <th>Products</th>
-                        <th>Quantity</th>
-                        <th>Price</th>
-                        <th>Total</th>
-                        <th>Batch Number</th>
-                        <th>Expiration Date</th>
-                    </tr>
-                </thead>
-                <tbody>'
-            . $data->map(function ($row) {
-                return '
-                        <tr>
-                            <td>' . $row->import_id . '</td>
-                            <td>' . $row->imp_date . '</td>
-                            <td>' . htmlspecialchars($row->staff_name ?? '') . '</td>
-                            <td>' . htmlspecialchars($row->supplier_name ?? '') . '</td>
-                            <td>' . htmlspecialchars($row->product_name ?? '') . '</td>
-                            <td>' . number_format($row->qty ?? 0) . '</td>
-                            <td class="amount">$' . number_format($row->unit_price ?? 0, 2) . '</td>
-                            <td class="amount">$' . number_format($row->amount ?? 0, 2) . '</td>
-                            <td>' . htmlspecialchars($row->batch_number ?? 'N/A') . '</td>
-                            <td>' . ($row->expiration_date ? date('Y-m-d', strtotime($row->expiration_date)) : 'N/A') . '</td>
-                        </tr>';
-            })->join('') . '
-                </tbody>
-            </table>') . '
+            // Calculate payment information for this order
+            $totalPaid = 0;
+            $paymentStatus = 'Unpaid';
             
-            <div class="footer">
-                <p>Stock Import Management Report</p>
-            </div>
-        </body>
-        </html>';
-
-        return $html;
-    }
-
-
-    private function generateSalesPdfHtml($data, $summary, $request)
-    {
-        $dateRange = '';
-        if ($request->has('date_from') && $request->has('date_to')) {
-            $dateRange = 'From ' . $request->date_from . ' to ' . $request->date_to;
-        } elseif ($request->has('date_from')) {
-            $dateRange = 'From ' . $request->date_from;
-        } elseif ($request->has('date_to')) {
-            $dateRange = 'To ' . $request->date_to;
+            // Safely calculate total paid
+            if ($order->payments && $order->payments->count() > 0) {
+                $totalPaid = $order->payments->sum('deposit');
+                \Log::info('Payment data found:', ['total_paid' => $totalPaid, 'order_total' => $order->total]);
+            }
+            
+            // Determine payment status
+            if ($order->total && $totalPaid >= $order->total) {
+                $paymentStatus = 'Paid';
+            } elseif ($totalPaid > 0) {
+                $paymentStatus = 'Partial';
+            }
+            
+            \Log::info('Payment status determined:', ['status' => $paymentStatus]);
+            
+            // Process each order detail
+            if ($order->orderDetails && $order->orderDetails->count() > 0) {
+                foreach ($order->orderDetails as $detail) {
+                    \Log::info('Processing order detail:', ['detail_id' => $detail->ord_code . '-' . $detail->pro_code]);
+                    
+                    // Try to get product name from multiple sources
+                    $productName = 'Unknown Product';
+                    if (!empty($detail->pro_name)) {
+                        $productName = $detail->pro_name;
+                    } elseif (!empty($detail->product) && !empty($detail->product->pro_name)) {
+                        $productName = $detail->product->pro_name;
+                    } elseif (!empty($detail->product_name)) {
+                        $productName = $detail->product_name;
+                    }
+                    
+                    // Get quantity with fallback
+                    $qty = 0;
+                    if (isset($detail->qty) && !is_null($detail->qty)) {
+                        $qty = $detail->qty;
+                    }
+                    
+                    // Get amount with fallback
+                    $amount = 0;
+                    if (isset($detail->amount) && !is_null($detail->amount)) {
+                        $amount = $detail->amount;
+                    } elseif (isset($detail->price) && isset($detail->qty)) {
+                        // Calculate amount from price and quantity if amount is not set
+                        $amount = $detail->price * $detail->qty;
+                    }
+                    
+                    // Get customer name with fallbacks
+                    $customerName = 'Unknown Customer';
+                    if (!empty($order->cus_name)) {
+                        $customerName = $order->cus_name;
+                    } elseif (!empty($order->customer) && !empty($order->customer->name)) {
+                        $customerName = $order->customer->name;
+                    }
+                    
+                    // Get staff name with fallbacks
+                    $staffName = 'Unknown Staff';
+                    if (!empty($order->full_name)) {
+                        $staffName = $order->full_name;
+                    } elseif (!empty($order->staff) && !empty($order->staff->full_name)) {
+                        $staffName = $order->staff->full_name;
+                    }
+                    
+                    $flattenedData[] = [
+                        'id' => $order->id ?? 0,
+                        'ord_date' => $order->ord_date ? $order->ord_date->format('Y-m-d') : 'N/A',
+                        'cus_name' => $customerName,
+                        'staff_name' => $staffName,
+                        'product_name' => $productName,
+                        'qty' => $qty,
+                        'amount' => $amount,
+                        'payment_status' => $paymentStatus,
+                        'status' => $order->status ?? 'completed',
+                    ];
+                }
+            } else {
+                // If there are no order details, still show the order with default values
+                $customerName = 'Unknown Customer';
+                if (!empty($order->cus_name)) {
+                    $customerName = $order->cus_name;
+                } elseif (!empty($order->customer) && !empty($order->customer->name)) {
+                    $customerName = $order->customer->name;
+                }
+                
+                // Get staff name with fallbacks
+                $staffName = 'Unknown Staff';
+                if (!empty($order->full_name)) {
+                    $staffName = $order->full_name;
+                } elseif (!empty($order->staff) && !empty($order->staff->full_name)) {
+                    $staffName = $order->staff->full_name;
+                }
+                
+                $flattenedData[] = [
+                    'id' => $order->id ?? 0,
+                    'ord_date' => $order->ord_date ? $order->ord_date->format('Y-m-d') : 'N/A',
+                    'cus_name' => $customerName,
+                    'staff_name' => $staffName,
+                    'product_name' => 'No Products',
+                    'qty' => 0,
+                    'amount' => 0,
+                    'payment_status' => $paymentStatus,
+                    'status' => $order->status ?? 'completed',
+                ];
+            }
         }
-
-        $html = '
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>Sales Report</title>
-            <style>
-                @font-face {
-                    font-family: "DejaVu Sans";
-                    src: url("http://localhost:8000/fonts/DejaVuSans.ttf") format("truetype");
-                }
-                @font-face {
-                    font-family: "DejaVu Sans";
-                    src: url("http://localhost:8000/fonts/DejaVuSans-Bold.ttf") format("truetype");
-                    font-weight: bold;
-                }
-                body { 
-                    font-family: "DejaVu Sans", sans-serif; 
-                    font-size: 12px; 
-                }
-                .header { text-align: center; margin-bottom: 30px; }
-                .company { font-size: 18px; font-weight: bold; color: #333; }
-                .title { font-size: 16px; font-weight: bold; margin: 10px 0; }
-                .info { margin: 5px 0; color: #666; }
-                .summary { background: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 5px; }
-                .summary-item { display: inline-block; margin-right: 30px; }
-                .summary-label { font-weight: bold; color: #333; }
-                .summary-value { color: #007bff; font-size: 14px; }
-                table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f2f2f2; font-weight: bold; }
-                .amount { text-align: right; }
-                .footer { margin-top: 30px; text-align: center; color: #666; font-size: 10px; }
-                .no-data { text-align: center; color: #888; padding: 20px; }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="company">Stock Sales Management Report</div>
-                <div class="title">Sale Report</div>
-                <div class="info">Created at: ' . date('Y-m-d') . '</div>
-                ' . ($dateRange ? '<div class="info">' . $dateRange . '</div>' : '') . '
-            </div>
-            
-
-            <div class="summary">
-                <div class="summary-item">
-                    <div class="summary-label">Total Orders:</div>
-                    <div class="summary-value">' . number_format($summary->total_orders ?? 0) . '</div>
-                </div>
-                <div class="summary-item">
-                    <div class="summary-label">Total Quantity:</div>
-                    <div class="summary-value">' . number_format($summary->total_qty ?? 0) . '</div>
-                </div>
-                <div class="summary-item">
-                    <div class="summary-label">Total Amount:</div>
-                    <div class="summary-value">$' . number_format($summary->total_amount ?? 0, 2) . '</div>
-                </div>
-            </div>
-
-            ' . ($data->isEmpty() ? '<div class="no-data">No data available for the selected filters.</div>' : '
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Date</th>
-                        <th>Staffs</th>
-                        <th>Suppliers</th>
-                        <th>Products</th>
-                        <th>Quantity</th>
-                        <th>Price</th>
-                        <th>Amount</th>
-                    </tr>
-                </thead>
-                <tbody>'
-            . $data->map(function ($row) {
-                return '
-                        <tr>
-                            <td>' . $row->order_id . '</td>
-                            <td>' . $row->ord_date . '</td>
-                            <td>' . htmlspecialchars($row->staff_name ?? '') . '</td>
-                            <td>' . htmlspecialchars($row->customer_name ?? '') . '</td>
-                            <td>' . htmlspecialchars($row->product_name ?? '') . '</td>
-                            <td>' . number_format($row->qty ?? 0) . '</td>
-                            <td class="amount">$' . number_format($row->unit_price ?? 0, 2) . '</td>
-                            <td class="amount">$' . number_format($row->amount ?? 0, 2) . '</td>
-                        </tr>';
-            })->join('') . '
-                </tbody>
-            </table>') . '
-            
-            <div class="footer">
-                <p>Stock Sales Management Report</p>
-            </div>
-        </body>
-        </html>';
-
-        return $html;
-    }
-
-    /**
-     * Generate Word document for single record
-     */
-    private function generateImportWordDocument($data, $type)
-    {
-        $phpWord = new PhpWord();
-
-        // Add section
-        $section = $phpWord->addSection([
-            'marginLeft' => 600,
-            'marginRight' => 600,
-            'marginTop' => 600,
-            'marginBottom' => 600,
-        ]);
-
-        // Title Style
-        $titleStyle = ['name' => 'Arial', 'size' => 18, 'bold' => true, 'color' => '000080'];
-        $headerStyle = ['name' => 'Arial', 'size' => 14, 'bold' => true, 'color' => '333333'];
-        $labelStyle = ['name' => 'Arial', 'size' => 11, 'bold' => true, 'color' => '666666'];
-        $valueStyle = ['name' => 'Arial', 'size' => 11, 'color' => '000000'];
-        $centerAlign = ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::CENTER];
-
-        // Header
-        $section->addText('Imported Goods Management Report', $titleStyle, $centerAlign);
-        $section->addText(strtoupper($type) . ' REPORT', $headerStyle, $centerAlign);
-        $section->addText('Generated on: ' . date('F d, Y \a\t'), $valueStyle, $centerAlign);
-        $section->addTextBreak(2);
-
-        // Transaction Information Header
-        $section->addText('TRANSACTION INFORMATION', $headerStyle);
-        $section->addTextBreak(1);
-
-        // Create table for transaction details
-        $table = $section->addTable([
-            'borderSize' => 6,
-            'borderColor' => 'cccccc',
-            'cellMargin' => 80
-        ]);
-
-        // Transaction ID
-        $table->addRow();
-        $table->addCell(3000)->addText('Transaction ID:', $labelStyle);
-        $idValue = $type === 'import' ? $data->import_id : $data->order_id;
-        $table->addCell(6000)->addText('#' . $idValue, $valueStyle);
-
-        // Date
-        $table->addRow();
-        $table->addCell(3000)->addText('Date:', $labelStyle);
-        $dateValue = $type === 'import' ? $data->imp_date : $data->ord_date;
-        $table->addCell(6000)->addText(date('F d, Y', strtotime($dateValue)), $valueStyle);
-
-        // Staff
-        $table->addRow();
-        $table->addCell(3000)->addText('Staff:', $labelStyle);
-        $table->addCell(6000)->addText($data->staff_name, $valueStyle);
-
-        // Supplier/Customer
-        $table->addRow();
-        $thirdPartyLabel = $type === 'import' ? 'Supplier:' : 'Customer:';
-        $thirdPartyValue = $type === 'import' ? $data->supplier_name : $data->customer_name;
-        $table->addCell(3000)->addText($thirdPartyLabel, $labelStyle);
-        $table->addCell(6000)->addText($thirdPartyValue, $valueStyle);
-
-        $section->addTextBreak(2);
-
-        // Product Information Header
-        $section->addText('PRODUCT DETAILS', $headerStyle);
-        $section->addTextBreak(1);
-
-        // Product details table
-        $productTable = $section->addTable([
-            'borderSize' => 6,
-            'borderColor' => 'cccccc',
-            'cellMargin' => 80
-        ]);
-
-        // Table headers
-        $productTable->addRow();
-        $productTable->addCell(4000)->addText('Product Name', $labelStyle);
-        $productTable->addCell(2000)->addText('Quantity', $labelStyle, ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::CENTER]);
-        $productTable->addCell(3000)->addText('Unit Price', $labelStyle, ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::RIGHT]);
-        $productTable->addCell(3000)->addText('Amount', $labelStyle, ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::RIGHT]);
-
-        // Product details
-        $productTable->addRow();
-        $productTable->addCell(4000)->addText($data->product_name, $valueStyle);
-        $productTable->addCell(2000)->addText(number_format($data->qty), $valueStyle, ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::CENTER]);
-        $productTable->addCell(3000)->addText('$' . number_format($data->unit_price, 2), $valueStyle, ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::RIGHT]);
-        $productTable->addCell(3000)->addText('$' . number_format($data->amount, 2), $valueStyle, ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::RIGHT]);
-
-        $section->addTextBreak(2);
-
-        // Total
-        $section->addText(
-            'TOTAL: $' . number_format($data->import_total ?? $data->order_total, 2),
-            array_merge($headerStyle, ['size' => 16]),
-            ['alignment' => \PhpOffice\PhpWord\SimpleType\Jc::RIGHT]
-        );
-
-        $section->addTextBreak(3);
-
-        // Footer
-        $section->addText(
-            'Imported Goods Management Report',
-            ['name' => 'Arial', 'size' => 9, 'color' => '666666'],
-            $centerAlign
-        );
-        $section->addText(
-            'Confidential - For Internal Use Only',
-            ['name' => 'Arial', 'size' => 8, 'color' => '999999'],
-            $centerAlign
-        );
-
-        // Save file
-        $filename = $type . '_report_' . date('Y_m_d_H_i') . '.docx';
-        $tempFile = storage_path('app/public/' . $filename);
-
-        $writer = IOFactory::createWriter($phpWord, 'Word2007');
-        $writer->save($tempFile);
-
-        return $tempFile;
+        
+        \Log::info('Final flattened data count:', ['count' => count($flattenedData)]);
+        
+        return $flattenedData;
     }
 }

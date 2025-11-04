@@ -219,4 +219,195 @@ class UserController extends Controller
             'message' => 'User deleted successfully'
         ]);
     }
+
+    /**
+     * Update current user's profile
+     */
+    public function updateProfile(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            
+            $validator = Validator::make($request->all(), [
+                'name' => 'sometimes|string|max:255',
+                'email' => 'sometimes|email|unique:users,email,' . $user->id,
+                'phone' => 'sometimes|nullable|string|max:20',
+                'address' => 'sometimes|nullable|string|max:255',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation Error',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            // Update user data
+            $userData = $request->only(['name', 'email']);
+            $user->update($userData);
+
+            // Update or create profile
+            $profile = $user->profile ?: new Profile(['user_id' => $user->id]);
+            
+            // Update profile data
+            $profileData = $request->only(['phone', 'address']);
+            if (!empty($profileData)) {
+                $profile->fill($profileData);
+                $profile->save();
+            }
+
+            $user->load('profile');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile updated successfully',
+                'data' => $user
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update profile: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Upload profile photo
+     */
+    public function uploadPhoto(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:5120' // 5MB max
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 400);
+            }
+
+            $user = auth()->user();
+            
+            // Get or create profile
+            $profile = $user->profile ?: new Profile(['user_id' => $user->id]);
+            
+            // Delete old photo if exists
+            if ($profile->image && Storage::disk('public')->exists($profile->image)) {
+                Storage::disk('public')->delete($profile->image);
+            }
+
+            // Store new photo
+            $photoPath = $request->file('photo')->store('profile-photos', 'public');
+            
+            // Update profile with photo path
+            $profile->image = $photoPath;
+            $profile->save();
+
+            // Reload user with profile
+            $user->load('profile');
+            
+            $photoUrl = Storage::disk('public')->url($photoPath);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Photo uploaded successfully',
+                'photo_url' => $photoUrl,
+                'user' => $user
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload photo: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Remove profile photo
+     */
+    public function removePhoto(Request $request)
+    {
+        try {
+            $user = auth()->user();
+            $profile = $user->profile;
+            
+            if ($profile && $profile->image) {
+                // Delete photo file
+                if (Storage::disk('public')->exists($profile->image)) {
+                    Storage::disk('public')->delete($profile->image);
+                }
+                
+                // Update profile record
+                $profile->update(['image' => null]);
+            }
+
+            // Reload user with profile
+            $user->load('profile');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Photo removed successfully',
+                'user' => $user
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to remove photo: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Update user password
+     */
+    public function updatePassword(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'current_password' => 'required|string',
+                'password' => 'required|string|min:6|confirmed'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 400);
+            }
+
+            $user = auth()->user();
+            
+            // Check if current password is correct
+            if (!Hash::check($request->current_password, $user->password)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Current password is incorrect'
+                ], 400);
+            }
+
+            // Update password
+            $user->update([
+                'password' => Hash::make($request->password)
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Password updated successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update password: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }

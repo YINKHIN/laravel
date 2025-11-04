@@ -9,6 +9,18 @@ use Illuminate\Support\Facades\Storage;
 class ProductController extends Controller
 {
     /**
+     * Test public method
+     */
+    public function testPublic()
+    {
+        return response()->json([
+            'success' => true,
+            'message' => 'ProductController public method works',
+            'timestamp' => now()
+        ]);
+    }
+
+    /**
      * Display a listing of the resource.
      */
     public function index(Request $request)
@@ -72,7 +84,7 @@ class ProductController extends Controller
             'reorder_quantity' => 'nullable|integer|min:1',
             'batch_number' => 'nullable|string|max:50',
             'expiration_date' => 'nullable|date',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048'
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp,avif|max:2048'
         ];
 
         $request->validate($rules);
@@ -141,9 +153,9 @@ class ProductController extends Controller
 
         // Only add image validation if a file is being uploaded
         if ($request->hasFile('image')) {
-            $rules['image'] = 'required|image|mimes:jpeg,png,jpg,gif,webp|max:2048';
+            $rules['image'] = 'required|image|mimes:jpeg,png,jpg,gif,webp,avif|max:2048';
         } else {
-            $rules['image'] = 'nullable|image|mimes:jpeg,png,jpg,gif,webp|max:2048';
+            $rules['image'] = 'nullable|image|mimes:jpeg,png,jpg,gif,webp,avif|max:2048';
         }
 
         $request->validate($rules);
@@ -322,6 +334,261 @@ class ProductController extends Controller
         return response()->json([
             'success' => true,
             'data' => $products
+        ]);
+    }
+
+    /**
+     * Get featured products for e-commerce
+     */
+    public function getFeaturedProducts(Request $request)
+    {
+        $limit = $request->get('limit', 8);
+        
+        $products = Product::with(['category', 'brand'])
+            ->where('status', 'active')
+            ->where('qty', '>', 0)
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get()
+            ->map(function ($product) {
+                return [
+                    'id' => $product->id,
+                    'name' => $product->pro_name,
+                    'description' => $product->pro_description,
+                    'price' => $product->sup,
+                    'originalPrice' => $product->upis,
+                    'image' => $product->image ? asset('storage/' . $product->image) : null,
+                    'category' => $product->category ? $product->category->name : null,
+                    'brand' => $product->brand ? $product->brand->name : null,
+                    'inStock' => $product->qty > 0,
+                    'quantity' => $product->qty,
+                    'rating' => 4.5, // Mock rating
+                    'reviews' => rand(10, 100), // Mock reviews
+                    'featured' => true
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $products
+        ]);
+    }
+
+    /**
+     * Get best selling products for e-commerce
+     */
+    public function getBestSellers(Request $request)
+    {
+        $limit = $request->get('limit', 8);
+        
+        // Mock best sellers based on random selection for now
+        // In a real app, you'd calculate this based on order_details
+        $products = Product::with(['category', 'brand'])
+            ->where('status', 'active')
+            ->where('qty', '>', 0)
+            ->inRandomOrder()
+            ->limit($limit)
+            ->get()
+            ->map(function ($product) {
+                return [
+                    'id' => $product->id,
+                    'name' => $product->pro_name,
+                    'description' => $product->pro_description,
+                    'price' => $product->sup,
+                    'originalPrice' => $product->upis,
+                    'image' => $product->image ? asset('storage/' . $product->image) : null,
+                    'category' => $product->category ? $product->category->name : null,
+                    'brand' => $product->brand ? $product->brand->name : null,
+                    'inStock' => $product->qty > 0,
+                    'quantity' => $product->qty,
+                    'rating' => rand(40, 50) / 10, // Mock rating 4.0-5.0
+                    'reviews' => rand(50, 200), // Mock reviews
+                    'bestSeller' => true,
+                    'soldCount' => rand(100, 500) // Mock sold count
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $products
+        ]);
+    }
+
+    /**
+     * Get new arrival products for e-commerce
+     */
+    public function getNewArrivals(Request $request)
+    {
+        $limit = $request->get('limit', 8);
+        
+        $products = Product::with(['category', 'brand'])
+            ->where('status', 'active')
+            ->where('qty', '>', 0)
+            ->orderBy('created_at', 'desc')
+            ->limit($limit)
+            ->get()
+            ->map(function ($product) {
+                return [
+                    'id' => $product->id,
+                    'name' => $product->pro_name,
+                    'description' => $product->pro_description,
+                    'price' => $product->sup,
+                    'originalPrice' => $product->upis,
+                    'image' => $product->image ? asset('storage/' . $product->image) : null,
+                    'category' => $product->category ? $product->category->name : null,
+                    'brand' => $product->brand ? $product->brand->name : null,
+                    'inStock' => $product->qty > 0,
+                    'quantity' => $product->qty,
+                    'rating' => rand(35, 50) / 10, // Mock rating 3.5-5.0
+                    'reviews' => rand(5, 50), // Mock reviews
+                    'isNew' => true,
+                    'createdAt' => $product->created_at
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $products
+        ]);
+    }
+
+    /**
+     * Get products on sale for e-commerce
+     */
+    public function getOnSaleProducts(Request $request)
+    {
+        $limit = $request->get('limit', 8);
+        
+        // Products where selling price is less than original price
+        $products = Product::with(['category', 'brand'])
+            ->where('status', 'active')
+            ->where('qty', '>', 0)
+            ->whereColumn('sup', '<', 'upis')
+            ->limit($limit)
+            ->get()
+            ->map(function ($product) {
+                $discount = round((($product->upis - $product->sup) / $product->upis) * 100);
+                return [
+                    'id' => $product->id,
+                    'name' => $product->pro_name,
+                    'description' => $product->pro_description,
+                    'price' => $product->sup,
+                    'originalPrice' => $product->upis,
+                    'image' => $product->image ? asset('storage/' . $product->image) : null,
+                    'category' => $product->category ? $product->category->name : null,
+                    'brand' => $product->brand ? $product->brand->name : null,
+                    'inStock' => $product->qty > 0,
+                    'quantity' => $product->qty,
+                    'rating' => rand(35, 50) / 10, // Mock rating 3.5-5.0
+                    'reviews' => rand(10, 100), // Mock reviews
+                    'onSale' => true,
+                    'discount' => $discount
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $products
+        ]);
+    }
+
+    /**
+     * Search products for e-commerce
+     */
+    public function search(Request $request)
+    {
+        $query = $request->get('q', '');
+        $category = $request->get('category');
+        $minPrice = $request->get('min_price');
+        $maxPrice = $request->get('max_price');
+        $limit = $request->get('limit', 20);
+        
+        $productsQuery = Product::with(['category', 'brand'])
+            ->where('status', 'active')
+            ->where('qty', '>', 0);
+
+        if ($query) {
+            $productsQuery->where(function ($q) use ($query) {
+                $q->where('pro_name', 'like', "%{$query}%")
+                  ->orWhere('pro_description', 'like', "%{$query}%");
+            });
+        }
+
+        if ($category) {
+            $productsQuery->whereHas('category', function ($q) use ($category) {
+                $q->where('name', 'like', "%{$category}%");
+            });
+        }
+
+        if ($minPrice) {
+            $productsQuery->where('sup', '>=', $minPrice);
+        }
+
+        if ($maxPrice) {
+            $productsQuery->where('sup', '<=', $maxPrice);
+        }
+
+        $products = $productsQuery->limit($limit)
+            ->get()
+            ->map(function ($product) {
+                return [
+                    'id' => $product->id,
+                    'name' => $product->pro_name,
+                    'description' => $product->pro_description,
+                    'price' => $product->sup,
+                    'originalPrice' => $product->upis,
+                    'image' => $product->image ? asset('storage/' . $product->image) : null,
+                    'category' => $product->category ? $product->category->name : null,
+                    'brand' => $product->brand ? $product->brand->name : null,
+                    'inStock' => $product->qty > 0,
+                    'quantity' => $product->qty,
+                    'rating' => rand(30, 50) / 10, // Mock rating 3.0-5.0
+                    'reviews' => rand(5, 150) // Mock reviews
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $products,
+            'query' => $query,
+            'total' => $products->count()
+        ]);
+    }
+
+    /**
+     * Get products by category for e-commerce
+     */
+    public function getByCategory(Request $request, $categoryId)
+    {
+        $limit = $request->get('limit', 20);
+        
+        $products = Product::with(['category', 'brand'])
+            ->where('status', 'active')
+            ->where('qty', '>', 0)
+            ->where('category_id', $categoryId)
+            ->limit($limit)
+            ->get()
+            ->map(function ($product) {
+                return [
+                    'id' => $product->id,
+                    'name' => $product->pro_name,
+                    'description' => $product->pro_description,
+                    'price' => $product->sup,
+                    'originalPrice' => $product->upis,
+                    'image' => $product->image ? asset('storage/' . $product->image) : null,
+                    'category' => $product->category ? $product->category->name : null,
+                    'brand' => $product->brand ? $product->brand->name : null,
+                    'inStock' => $product->qty > 0,
+                    'quantity' => $product->qty,
+                    'rating' => rand(30, 50) / 10, // Mock rating 3.0-5.0
+                    'reviews' => rand(5, 150) // Mock reviews
+                ];
+            });
+
+        return response()->json([
+            'success' => true,
+            'data' => $products,
+            'category_id' => $categoryId
         ]);
     }
 }

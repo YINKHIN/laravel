@@ -29,6 +29,18 @@ Route::get('/test-api', function () {
     return response()->json(['message' => 'API routes are working']);
 });
 
+// Test route for debugging
+Route::get('/test-products', function () {
+    return response()->json([
+        'success' => true,
+        'message' => 'Test products endpoint working',
+        'data' => [
+            ['id' => 1, 'name' => 'Test Product 1'],
+            ['id' => 2, 'name' => 'Test Product 2']
+        ]
+    ]);
+});
+
 /*
  * |--------------------------------------------------------------------------
  * | API Routes
@@ -63,7 +75,7 @@ Route::prefix('auth')->group(function () {
 });
 
 // Protected routes
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth:api')->group(function () {
     // Read-only routes for all users
     Route::get('users', [UserController::class, 'index']);
     Route::get('users/{id}', [UserController::class, 'show']);
@@ -136,6 +148,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::post('payments', [PaymentController::class, 'store']);
         Route::put('payments/{id}', [PaymentController::class, 'update']);
+        Route::delete('payments/{id}', [PaymentController::class, 'destroy']);
     });
 
     // Third-party integration routes
@@ -184,11 +197,11 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Report routes
-    Route::prefix('reports')->group(function () {
-        Route::get('import-report', [ReportController::class, 'importReport']);
-        Route::get('sales-report', [ReportController::class, 'salesReport']);
-        Route::get('import-summary', [ReportController::class, 'importSummary']);
-        Route::get('sales-summary', [ReportController::class, 'salesSummary']);
+    Route::prefix('reports')->middleware('auth:sanctum')->group(function () {
+        Route::get('import-report', [ReportController::class, 'getImportReport']);
+        Route::get('sales-report', [ReportController::class, 'getSalesReport']);
+        Route::get('import-summary', [ReportController::class, 'getImportSummary']);
+        Route::get('sales-summary', [ReportController::class, 'getSalesSummary']);
         Route::get('export-import-excel', [ReportController::class, 'exportImportExcel']);
         Route::get('export-sales-excel', [ReportController::class, 'exportSalesExcel']);
         Route::get('export-import-excel-xlsx', [ReportController::class, 'exportImportExcelXlsx']);

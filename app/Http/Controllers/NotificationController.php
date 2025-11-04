@@ -14,6 +14,12 @@ class NotificationController extends Controller
     public function index(Request $request)
     {
         $user = Auth::user();
+        
+        // Handle case where user is null (demo mode or auth issues)
+        if (!$user) {
+            return response()->json([]);
+        }
+        
         $query = Notification::where('user_id', $user->id);
 
         // Filter by read status if provided

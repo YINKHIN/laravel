@@ -6,7 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class CheckSalesRole
+class CheckManagerRole
 {
     /**
      * Handle an incoming request.
@@ -35,16 +35,17 @@ class CheckSalesRole
         // Get user type - try multiple ways to access it
         $userType = $user->type ?? $user->getAttribute('type') ?? null;
         
-        // Allow admin, manager, sales_staff, and staff_sale (legacy) roles
-        $allowedRoles = ['admin', 'manager', 'sales_staff', 'staff_sale', 'sales'];
+        // Allow admin and manager roles
+        $allowedRoles = ['admin', 'manager'];
         
         if (!$userType || !in_array($userType, $allowedRoles)) {
             return response()->json([
                 'success' => false,
-                'message' => 'Access denied. Admin, Manager, or Sales Staff role required.',
+                'message' => 'Access denied. Admin or Manager role required.',
                 'debug' => config('app.debug') ? [
                     'user_type' => $userType,
-                    'allowed_types' => $allowedRoles
+                    'allowed_types' => $allowedRoles,
+                    'user_class' => get_class($user)
                 ] : null
             ], 403);
         }

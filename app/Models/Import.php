@@ -16,11 +16,18 @@ class Import extends Model
         'sup_id',
         'supplier',
         'total',
+        'amount',
+        'qty',
+        'batch_number',
+        'expiration_date',
+        'status',
     ];
 
     protected $casts = [
         'imp_date' => 'date',
-        'total' => 'decimal:2',
+        'amount' => 'decimal:2',
+        'qty' => 'integer',
+        'expiration_date' => 'date',
     ];
 
     /**
