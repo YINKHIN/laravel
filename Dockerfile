@@ -1,6 +1,6 @@
 FROM php:8.2-apache
 
-# Install required system packages and PHP extensions
+# Install ALL required dependencies
 RUN apt-get update && apt-get install -y \
     libpng-dev \
     libjpeg-dev \
@@ -12,20 +12,20 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install gd pdo pdo_mysql zip
 
-# Set working directory
+# Enable Apache mod_rewrite
+RUN a2enmod rewrite
+
 WORKDIR /var/www/html
 
-# Copy project files
 COPY . .
 
-# Install Composer
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
-# Install Laravel dependencies
 RUN composer install --no-dev --optimize-autoloader
 
-# Expose port
-EXPOSE 8000
+RUN chown -R www-data:www-data storage bootstrap/cache
+RUN chmod -R 775 storage bootstrap/cache
+RUN php artisan key:generate --force
 
-# Start Laravel server
-CMD php artisan serve --host=0.0.0.0 --port=$PORT
+EXPOSE 80
+CMD ["apache2-foreground"]

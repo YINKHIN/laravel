@@ -23,6 +23,7 @@ use App\Http\Controllers\ThirdPartyIntegrationController;
 use App\Http\Controllers\UserController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 
 // Simple test route
 Route::get('/test-api', function () {
@@ -53,6 +54,106 @@ Route::get('/test-products', function () {
  */
 
 // All API routes are prefixed with /api by default in Laravel
+
+// Test route to verify storage access
+Route::get('/test-storage/{folder}/{filename}', function ($folder, $filename) {
+    $path = "{$folder}/{$filename}";
+    $exists = Storage::disk('public')->exists($path);
+    $filePath = storage_path("app/public/{$path}");
+    
+    return response()->json([
+        'folder' => $folder,
+        'filename' => $filename,
+        'path' => $path,
+        'exists' => $exists,
+        'file_path' => $filePath,
+        'file_exists' => file_exists($filePath),
+        'is_readable' => is_readable($filePath),
+        'storage_path' => storage_path('app/public'),
+        'files_in_folder' => $exists ? Storage::disk('public')->files($folder) : []
+    ]);
+});
+
+// Public image serving route (no authentication required)
+Route::get('/storage/{folder}/{filename}', function ($folder, $filename) {
+    try {
+        // Decode URL-encoded filename
+        $filename = urldecode($filename);
+        $folder = urldecode($folder);
+        
+        // Use Storage facade to properly access files
+        $path = "{$folder}/{$filename}";
+        $filePath = storage_path("app/public/{$path}");
+        
+        // Check if file exists using Storage facade
+        if (!Storage::disk('public')->exists($path)) {
+            // Also check directly with file_exists as fallback
+            if (!file_exists($filePath)) {
+                \Log::warning("Image not found: {$path}", [
+                    'folder' => $folder,
+                    'filename' => $filename,
+                    'full_path' => $filePath,
+                    'storage_root' => storage_path('app/public'),
+                    'files_in_folder' => Storage::disk('public')->files($folder)
+                ]);
+                return response()->json([
+                    'error' => 'Image not found',
+                    'path' => $path,
+                    'file_path' => $filePath
+                ], 404);
+            }
+        }
+        
+        // Read file
+        $file = file_get_contents($filePath);
+        
+        if ($file === false) {
+            \Log::error("Failed to read file: {$filePath}");
+            return response()->json(['error' => 'Failed to read file', 'path' => $filePath], 500);
+        }
+        
+        // Get MIME type
+        $type = null;
+        if (function_exists('finfo_open')) {
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $type = finfo_file($finfo, $filePath);
+            finfo_close($finfo);
+        }
+        
+        // Fallback to extension-based MIME type
+        if (!$type) {
+            $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+            $mimeTypes = [
+                'jpg' => 'image/jpeg',
+                'jpeg' => 'image/jpeg',
+                'png' => 'image/png',
+                'gif' => 'image/gif',
+                'webp' => 'image/webp',
+                'svg' => 'image/svg+xml',
+            ];
+            $type = $mimeTypes[$extension] ?? 'application/octet-stream';
+        }
+        
+        return response($file, 200)
+            ->header('Content-Type', $type)
+            ->header('Cache-Control', 'public, max-age=31536000')
+            ->header('Access-Control-Allow-Origin', '*')
+            ->header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    } catch (\Exception $e) {
+        \Log::error("Error serving image: " . $e->getMessage(), [
+            'trace' => $e->getTraceAsString(),
+            'folder' => $folder ?? 'unknown',
+            'filename' => $filename ?? 'unknown'
+        ]);
+        return response()->json([
+            'error' => 'Internal server error',
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine()
+        ], 500);
+    }
+})->where(['folder' => '[a-zA-Z0-9_-]+', 'filename' => '.+']); // Allow any characters in filename
+
 // System status routes (no authentication required for health checks)
 Route::prefix('system')->group(function () {
     Route::get('health', [SystemStatusController::class, 'healthCheck']);
