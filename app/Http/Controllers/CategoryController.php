@@ -112,7 +112,7 @@ class CategoryController extends Controller
                 'name' => 'required|string|max:100|unique:categories,name',
                 'description' => 'nullable|string|max:500',
                 'status' => 'sometimes|in:active,inactive',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp,svg|max:5120' // 5MB max
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp,svg|max:15120' // 5MB max
             ];
             
             $validatedData = $request->validate($rules);
@@ -188,7 +188,7 @@ class CategoryController extends Controller
                 'name' => 'required|string|max:100|unique:categories,name,' . $id,
                 'description' => 'nullable|string|max:500',
                 'status' => 'sometimes|in:active,inactive',
-                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp,svg|max:5120', // 5MB max
+                'image' => 'nullable|image|mimes:jpeg,png,jpg,gif,webp,svg|max:15120', // 5MB max
                 'remove_image' => 'sometimes|boolean'
             ];
             

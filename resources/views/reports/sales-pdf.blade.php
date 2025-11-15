@@ -75,7 +75,8 @@
     
     <div class="info">
         <p><strong>Generated on:</strong> {{ $generated_at }}</p>
-        <p><strong>Total Records:</strong> {{ $total_records }}</p>
+        <p><strong>Total Orders:</strong> {{ $total_orders ?? count(array_unique(array_column($sales, 'id'))) }}</p>
+        <p><strong>Total Sales:</strong> ${{ number_format($total_sales ?? array_sum(array_column($sales, 'amount')), 2) }}</p>
         <p><strong>Date Range:</strong> 
             @if($date_from && $date_to)
                 {{ $date_from }} to {{ $date_to }}
@@ -119,7 +120,8 @@
         </table>
         
         <div class="info total">
-            <p><strong>Total Revenue:</strong> ${{ number_format(array_sum(array_column($sales, 'amount')), 2) }}</p>
+            <p><strong>Total Orders:</strong> {{ $total_orders ?? count(array_unique(array_column($sales, 'id'))) }}</p>
+            <p><strong>Total Sales:</strong> ${{ number_format($total_sales ?? array_sum(array_column($sales, 'amount')), 2) }}</p>
         </div>
     @else
         <div class="no-data">

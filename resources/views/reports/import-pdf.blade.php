@@ -90,8 +90,9 @@
 
     <div class="info">
         <p><strong>Generated on:</strong> {{ $generated_at }}</p>
-        <p><strong>Total Records:</strong> {{ $total_records }}</p>
-        <p><strong>Total Amount:</strong> ${{ number_format(array_sum(array_column($imports, 'amount')), 2) }}</p>
+        <p><strong>Total Imports:</strong> {{ $total_imports ?? count(array_unique(array_column($imports, 'id'))) }}</p>
+        <p><strong>Total Value:</strong> ${{ number_format($total_value ?? array_sum(array_column($imports, 'amount')), 2) }}</p>
+        <p><strong>Total Quantity:</strong> {{ number_format($total_quantity ?? array_sum(array_column($imports, 'qty')), 0) }}</p>
         <p><strong>Date Range:</strong>
             @if ($date_from && $date_to)
                 {{ $date_from }} to {{ $date_to }}
@@ -137,7 +138,9 @@
         </table>
 
         <div class="info total">
-            <p><strong>Total Quantity:</strong> {{ array_sum(array_column($imports, 'qty')) }}</p>
+            <p><strong>Total Quantity:</strong> {{ number_format($total_quantity ?? array_sum(array_column($imports, 'qty')), 0) }}</p>
+            <p><strong>Total Value:</strong> ${{ number_format($total_value ?? array_sum(array_column($imports, 'amount')), 2) }}</p>
+            <p><strong>Total Imports:</strong> {{ $total_imports ?? count(array_unique(array_column($imports, 'id'))) }}</p>
         </div>
     @else
         <div class="no-data">

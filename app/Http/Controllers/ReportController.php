@@ -30,27 +30,51 @@ class ReportController extends Controller
     
     public function getImportSummary(Request $request)
     {
-        $query = Import::query();
-        
-        if ($request->date_from) {
-            $query->whereDate('imp_date', '>=', $request->date_from);
-        }
-        
-        if ($request->date_to) {
-            $query->whereDate('imp_date', '<=', $request->date_to);
-        }
-        
-        $totalImports = $query->count();
-        $totalAmount = $query->sum('total');
-        
-        return response()->json([
-            'status' => 'success',
-            'data' => [
+        try {
+            $query = Import::query();
+            
+            if ($request->date_from) {
+                $query->whereDate('imp_date', '>=', $request->date_from);
+            }
+            
+            if ($request->date_to) {
+                $query->whereDate('imp_date', '<=', $request->date_to);
+            }
+            
+            $totalImports = $query->count();
+            $totalAmount = $query->sum('total');
+            
+            \Log::info('Import Summary:', [
+                'date_from' => $request->date_from,
+                'date_to' => $request->date_to,
                 'total_imports' => $totalImports,
-                'total_amount' => $totalAmount,
-                'average_amount' => $totalImports > 0 ? $totalAmount / $totalImports : 0,
-            ]
-        ]);
+                'total_amount' => $totalAmount
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_imports' => $totalImports,
+                    'total_amount' => floatval($totalAmount ?? 0),
+                    'average_amount' => $totalImports > 0 ? floatval($totalAmount) / $totalImports : 0,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Import Summary Error:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'data' => [
+                    'total_imports' => 0,
+                    'total_amount' => 0,
+                    'average_amount' => 0,
+                ]
+            ], 500);
+        }
     }
     
     // Sales Reports
@@ -74,27 +98,51 @@ class ReportController extends Controller
     
     public function getSalesSummary(Request $request)
     {
-        $query = Order::query();
-        
-        if ($request->date_from) {
-            $query->whereDate('ord_date', '>=', $request->date_from);
-        }
-        
-        if ($request->date_to) {
-            $query->whereDate('ord_date', '<=', $request->date_to);
-        }
-        
-        $totalOrders = $query->count();
-        $totalRevenue = $query->sum('total');
-        
-        return response()->json([
-            'status' => 'success',
-            'data' => [
+        try {
+            $query = Order::query();
+            
+            if ($request->date_from) {
+                $query->whereDate('ord_date', '>=', $request->date_from);
+            }
+            
+            if ($request->date_to) {
+                $query->whereDate('ord_date', '<=', $request->date_to);
+            }
+            
+            $totalOrders = $query->count();
+            $totalRevenue = $query->sum('total');
+            
+            \Log::info('Sales Summary:', [
+                'date_from' => $request->date_from,
+                'date_to' => $request->date_to,
                 'total_orders' => $totalOrders,
-                'total_revenue' => $totalRevenue,
-                'average_order_value' => $totalOrders > 0 ? $totalRevenue / $totalOrders : 0,
-            ]
-        ]);
+                'total_revenue' => $totalRevenue
+            ]);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'total_orders' => $totalOrders,
+                    'total_revenue' => floatval($totalRevenue ?? 0),
+                    'average_order_value' => $totalOrders > 0 ? floatval($totalRevenue) / $totalOrders : 0,
+                ]
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Sales Summary Error:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'data' => [
+                    'total_orders' => 0,
+                    'total_revenue' => 0,
+                    'average_order_value' => 0,
+                ]
+            ], 500);
+        }
     }
     
     // Export Functions
@@ -107,25 +155,31 @@ class ReportController extends Controller
         \Log::info('Export Import Excel data count:', ['count' => count($imports)]);
         \Log::info('Export Import Excel sample data:', array_slice($imports, 0, 3));
         
+        // Calculate summary statistics
+        $totalImports = count(array_unique(array_column($imports, 'id')));
+        $totalValue = array_sum(array_column($imports, 'amount'));
+        $totalQuantity = array_sum(array_column($imports, 'qty'));
+        
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         
         // Headers
         $sheet->setCellValue('A1', 'Import Report');
-        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d'));
-        $sheet->setCellValue('A3', 'Total Records: ' . count($imports));
-        $sheet->setCellValue('A4', 'Total Amount: $' . number_format(array_sum(array_column($imports, 'amount')), 2));
+        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d H:i:s'));
+        $sheet->setCellValue('A3', 'Total Imports: ' . $totalImports);
+        $sheet->setCellValue('A4', 'Total Value: $' . number_format($totalValue, 2));
+        $sheet->setCellValue('A5', 'Total Quantity: ' . number_format($totalQuantity, 0));
         
         // Table headers - MATCHING PDF TEMPLATE
         $headers = ['ID', 'Date', 'Staff', 'Supplier', 'Product Name', 'Qty', 'Amount', 'Batch Number', 'Expiration Date', 'Status'];
         $col = 'A';
         foreach ($headers as $header) {
-            $sheet->setCellValue($col . '6', $header);
+            $sheet->setCellValue($col . '7', $header);
             $col++;
         }
         
         // Data
-        $row = 7;
+        $row = 8;
         foreach ($imports as $import) {
             $sheet->setCellValue('A' . $row, $import['id']);
             $sheet->setCellValue('B' . $row, $import['imp_date']);
@@ -139,6 +193,17 @@ class ReportController extends Controller
             $sheet->setCellValue('J' . $row, $import['status']);
             $row++;
         }
+        
+        // Add summary totals at the bottom
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL QUANTITY:');
+        $sheet->setCellValue('F' . $row, $totalQuantity);
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL VALUE:');
+        $sheet->setCellValue('G' . $row, '$' . number_format($totalValue, 2));
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL IMPORTS:');
+        $sheet->setCellValue('F' . $row, $totalImports);
         
         $writer = new Xls($spreadsheet);
         
@@ -158,25 +223,31 @@ class ReportController extends Controller
         \Log::info('Export Import Excel XLSX data count:', ['count' => count($imports)]);
         \Log::info('Export Import Excel XLSX sample data:', array_slice($imports, 0, 3));
         
+        // Calculate summary statistics
+        $totalImports = count(array_unique(array_column($imports, 'id')));
+        $totalValue = array_sum(array_column($imports, 'amount'));
+        $totalQuantity = array_sum(array_column($imports, 'qty'));
+        
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         
         // Headers
         $sheet->setCellValue('A1', 'Import Report');
-        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d'));
-        $sheet->setCellValue('A3', 'Total Records: ' . count($imports));
-        $sheet->setCellValue('A4', 'Total Amount: $' . number_format(array_sum(array_column($imports, 'amount')), 2));
+        $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d H:i:s'));
+        $sheet->setCellValue('A3', 'Total Imports: ' . $totalImports);
+        $sheet->setCellValue('A4', 'Total Value: $' . number_format($totalValue, 2));
+        $sheet->setCellValue('A5', 'Total Quantity: ' . number_format($totalQuantity, 0));
         
         // Table headers - MATCHING PDF TEMPLATE
         $headers = ['ID', 'Date', 'Staff', 'Supplier', 'Product Name', 'Qty', 'Amount', 'Batch Number', 'Expiration Date', 'Status'];
         $col = 'A';
         foreach ($headers as $header) {
-            $sheet->setCellValue($col . '6', $header);
+            $sheet->setCellValue($col . '7', $header);
             $col++;
         }
         
         // Data
-        $row = 7;
+        $row = 8;
         foreach ($imports as $import) {
             $sheet->setCellValue('A' . $row, $import['id']);
             $sheet->setCellValue('B' . $row, $import['imp_date']);
@@ -190,6 +261,17 @@ class ReportController extends Controller
             $sheet->setCellValue('J' . $row, $import['status']);
             $row++;
         }
+        
+        // Add summary totals at the bottom
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL QUANTITY:');
+        $sheet->setCellValue('F' . $row, $totalQuantity);
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL VALUE:');
+        $sheet->setCellValue('G' . $row, '$' . number_format($totalValue, 2));
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL IMPORTS:');
+        $sheet->setCellValue('F' . $row, $totalImports);
         
         $writer = new Xlsx($spreadsheet);
         
@@ -209,6 +291,11 @@ class ReportController extends Controller
         \Log::info('Export Import PDF data count:', ['count' => count($imports)]);
         \Log::info('Export Import PDF sample data:', array_slice($imports, 0, 3));
         
+        // Calculate summary statistics
+        $totalImports = count(array_unique(array_column($imports, 'id')));
+        $totalValue = array_sum(array_column($imports, 'amount'));
+        $totalQuantity = array_sum(array_column($imports, 'qty'));
+        
         // Ensure proper UTF-8 encoding for PDF
         $imports = array_map(function($import) {
             return array_map(function($value) {
@@ -222,6 +309,9 @@ class ReportController extends Controller
         $pdf = Pdf::loadView('reports.import-pdf', [
             'imports' => $imports,
             'total_records' => count($imports),
+            'total_imports' => $totalImports,
+            'total_value' => $totalValue,
+            'total_quantity' => $totalQuantity,
             'generated_at' => now()->format('Y-m-d H:i:s'),
             'date_from' => $request->date_from,
             'date_to' => $request->date_to,
@@ -242,24 +332,29 @@ class ReportController extends Controller
         \Log::info('Export Sales Excel data count:', ['count' => count($sales)]);
         \Log::info('Export Sales Excel sample data:', array_slice($sales, 0, 3));
         
+        // Calculate summary statistics
+        $totalOrders = count(array_unique(array_column($sales, 'id')));
+        $totalSales = array_sum(array_column($sales, 'amount'));
+        
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         
         // Headers
         $sheet->setCellValue('A1', 'Sales Report');
         $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d H:i:s'));
-        $sheet->setCellValue('A3', 'Total Records: ' . count($sales));
+        $sheet->setCellValue('A3', 'Total Orders: ' . $totalOrders);
+        $sheet->setCellValue('A4', 'Total Sales: $' . number_format($totalSales, 2));
         
         // Table headers - MATCHING PDF TEMPLATE
         $headers = ['ID', 'Date', 'Customer', 'Staff', 'Product Name', 'Qty', 'Amount', 'Payment Status', 'Status'];
         $col = 'A';
         foreach ($headers as $header) {
-            $sheet->setCellValue($col . '5', $header);
+            $sheet->setCellValue($col . '6', $header);
             $col++;
         }
         
         // Data
-        $row = 6;
+        $row = 7;
         foreach ($sales as $sale) {
             $sheet->setCellValue('A' . $row, $sale['id']);
             $sheet->setCellValue('B' . $row, $sale['ord_date']);
@@ -272,6 +367,14 @@ class ReportController extends Controller
             $sheet->setCellValue('I' . $row, $sale['status']);
             $row++;
         }
+        
+        // Add summary totals at the bottom
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL ORDERS:');
+        $sheet->setCellValue('F' . $row, $totalOrders);
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL SALES:');
+        $sheet->setCellValue('G' . $row, '$' . number_format($totalSales, 2));
         
         $writer = new Xls($spreadsheet);
         
@@ -291,24 +394,29 @@ class ReportController extends Controller
         \Log::info('Export Sales Excel XLSX data count:', ['count' => count($sales)]);
         \Log::info('Export Sales Excel XLSX sample data:', array_slice($sales, 0, 3));
         
+        // Calculate summary statistics
+        $totalOrders = count(array_unique(array_column($sales, 'id')));
+        $totalSales = array_sum(array_column($sales, 'amount'));
+        
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         
         // Headers
         $sheet->setCellValue('A1', 'Sales Report');
         $sheet->setCellValue('A2', 'Generated on: ' . now()->format('Y-m-d H:i:s'));
-        $sheet->setCellValue('A3', 'Total Records: ' . count($sales));
+        $sheet->setCellValue('A3', 'Total Orders: ' . $totalOrders);
+        $sheet->setCellValue('A4', 'Total Sales: $' . number_format($totalSales, 2));
         
         // Table headers - MATCHING PDF TEMPLATE
         $headers = ['ID', 'Date', 'Customer', 'Staff', 'Product Name', 'Qty', 'Amount', 'Payment Status', 'Status'];
         $col = 'A';
         foreach ($headers as $header) {
-            $sheet->setCellValue($col . '5', $header);
+            $sheet->setCellValue($col . '6', $header);
             $col++;
         }
         
         // Data
-        $row = 6;
+        $row = 7;
         foreach ($sales as $sale) {
             $sheet->setCellValue('A' . $row, $sale['id']);
             $sheet->setCellValue('B' . $row, $sale['ord_date']);
@@ -321,6 +429,14 @@ class ReportController extends Controller
             $sheet->setCellValue('I' . $row, $sale['status']);
             $row++;
         }
+        
+        // Add summary totals at the bottom
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL ORDERS:');
+        $sheet->setCellValue('F' . $row, $totalOrders);
+        $row++;
+        $sheet->setCellValue('E' . $row, 'TOTAL SALES:');
+        $sheet->setCellValue('G' . $row, '$' . number_format($totalSales, 2));
         
         $writer = new Xlsx($spreadsheet);
         
@@ -340,6 +456,10 @@ class ReportController extends Controller
         \Log::info('Export Sales PDF data count:', ['count' => count($sales)]);
         \Log::info('Export Sales PDF sample data:', array_slice($sales, 0, 3));
         
+        // Calculate summary statistics
+        $totalOrders = count(array_unique(array_column($sales, 'id')));
+        $totalSales = array_sum(array_column($sales, 'amount'));
+        
         // Ensure proper UTF-8 encoding for PDF
         $sales = array_map(function($sale) {
             return array_map(function($value) {
@@ -353,6 +473,8 @@ class ReportController extends Controller
         $pdf = Pdf::loadView('reports.sales-pdf', [
             'sales' => $sales,
             'total_records' => count($sales),
+            'total_orders' => $totalOrders,
+            'total_sales' => $totalSales,
             'generated_at' => now()->format('Y-m-d H:i:s'),
             'date_from' => $request->date_from,
             'date_to' => $request->date_to,

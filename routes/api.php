@@ -35,11 +35,329 @@ Route::get('/test-products', function () {
     return response()->json([
         'success' => true,
         'message' => 'Test products endpoint working',
-        'data' => [
-            ['id' => 1, 'name' => 'Test Product 1'],
-            ['id' => 2, 'name' => 'Test Product 2']
-        ]
+       
     ]);
+});
+
+// Test route for categories (public, no auth required)
+Route::get('/test-categories', [CategoryController::class, 'index']);
+
+// Fast reports endpoints (optimized for speed with real data)
+Route::get('/fast-import-report', function (Request $request) {
+    try {
+        // Log all request parameters
+        \Log::info('Fast Import Report Request:', [
+            'all_params' => $request->all(),
+            'date_from' => $request->date_from,
+            'date_to' => $request->date_to
+        ]);
+        
+        // Build query with date filtering
+        $query = "SELECT * FROM imports WHERE 1=1";
+        $params = [];
+        
+        if ($request->has('date_from') && !empty($request->date_from)) {
+            $query .= " AND DATE(imp_date) >= ?";
+            $params[] = $request->date_from;
+        }
+        
+        if ($request->has('date_to') && !empty($request->date_to)) {
+            $query .= " AND DATE(imp_date) <= ?";
+            $params[] = $request->date_to;
+        }
+        
+        $query .= " ORDER BY imp_date DESC";
+        
+        // Always allow up to 500 records
+        $query .= " LIMIT 500";
+        
+        \Log::info('Fast Import Report Query:', ['query' => $query, 'params' => $params]);
+        
+        // First, let's check if there are ANY imports in the database
+        $totalImports = \Illuminate\Support\Facades\DB::select("SELECT COUNT(*) as count FROM imports");
+        \Log::info('Total imports in database:', ['count' => $totalImports[0]->count ?? 0]);
+        
+        // Get sample dates to see what dates exist
+        $sampleDates = \Illuminate\Support\Facades\DB::select("SELECT id, imp_date FROM imports ORDER BY imp_date DESC LIMIT 5");
+        \Log::info('Sample import dates:', ['dates' => $sampleDates]);
+        
+        $imports = \Illuminate\Support\Facades\DB::select($query, $params);
+        
+        \Log::info('Fast Import Report Results:', [
+            'count' => count($imports),
+            'sample' => $imports[0] ?? null,
+            'first_import_date' => $imports[0]->imp_date ?? null
+        ]);
+
+        $result = [];
+        foreach ($imports as $import) {
+            // Get staff name from users table or use existing staff name
+            $staff = null;
+            if ($import->staff_id) {
+                // Try to get from users table first (users table has 'name' column, not 'full_name')
+                $staff = \Illuminate\Support\Facades\DB::select("
+                    SELECT name FROM users WHERE id = ?
+                ", [$import->staff_id]);
+                
+                // If not found in users, try staffs table (staffs table has 'full_name' column)
+                if (empty($staff) || !isset($staff[0]->name)) {
+                    $staff = \Illuminate\Support\Facades\DB::select("
+                        SELECT full_name as name FROM staffs WHERE id = ?
+                    ", [$import->staff_id]);
+                }
+            }
+            
+            // Get supplier name from suppliers table  
+            $supplier = null;
+            if ($import->sup_id) {
+                $supplier = \Illuminate\Support\Facades\DB::select("
+                    SELECT supplier FROM suppliers WHERE id = ?
+                ", [$import->sup_id]);
+            }
+
+            // Get real import_details from database
+            $details = \Illuminate\Support\Facades\DB::select("
+                SELECT 
+                    pro_code,
+                    pro_name,
+                    qty,
+                    price,
+                    amount,
+                    batch_number,
+                    expiration_date
+                FROM import_details
+                WHERE imp_code = ?
+                ORDER BY pro_name
+            ", [$import->id]);
+
+            $processedDetails = [];
+            foreach ($details as $detail) {
+                $processedDetails[] = [
+                    'pro_name' => $detail->pro_name ?? 'Unknown Product',
+                    'qty' => intval($detail->qty ?? 0),
+                    'amount' => floatval($detail->amount ?? 0),
+                    'price' => floatval($detail->price ?? 0),
+                    'batch_number' => $detail->batch_number ?? 'N/A',
+                    'expiration_date' => $detail->expiration_date ?? 'N/A'
+                ];
+            }
+
+            // If no details, create a general entry
+            if (empty($processedDetails)) {
+                $processedDetails[] = [
+                    'pro_name' => 'General Import',
+                    'qty' => 1,
+                    'amount' => floatval($import->total ?? 0),
+                    'price' => floatval($import->total ?? 0),
+                    'batch_number' => 'N/A',
+                    'expiration_date' => 'N/A'
+                ];
+            }
+
+            // Get staff name with fallback
+            $staffName = 'Unknown Staff';
+            if ($staff && !empty($staff) && isset($staff[0]) && isset($staff[0]->name)) {
+                $staffName = $staff[0]->name;
+            } elseif (isset($import->full_name) && $import->full_name && $import->full_name !== 'Import from') {
+                $staffName = $import->full_name;
+            }
+            
+            // Ensure we don't use "Import from" as staff name or empty values
+            if ($staffName === 'Import from' || empty($staffName) || trim($staffName) === '') {
+                $staffName = 'Unknown Staff';
+            }
+            
+            $result[] = [
+                'id' => $import->id,
+                'imp_date' => $import->imp_date,
+                'staff_name' => $staffName,
+                'supplier_name' => $supplier ? ($supplier[0]->supplier ?? 'Unknown Supplier') : ($import->supplier ?? 'Unknown Supplier'),
+                'total_amount' => floatval($import->total ?? 0),
+                'status' => $import->status ?? 'completed',
+                'import_details' => $processedDetails
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $result
+        ]);
+    } catch (\Exception $e) {
+        \Log::error('Fast Import Report Error:', [
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage(),
+            'data' => [],
+            'error_details' => [
+                'file' => basename($e->getFile()),
+                'line' => $e->getLine()
+            ]
+        ]);
+    }
+});
+
+Route::get('/fast-sales-report', function (Request $request) {
+    try {
+        // Build query with date filtering
+        $query = "SELECT * FROM orders WHERE 1=1";
+        $params = [];
+        
+        if ($request->has('date_from')) {
+            $query .= " AND DATE(ord_date) >= ?";
+            $params[] = $request->date_from;
+        }
+        
+        if ($request->has('date_to')) {
+            $query .= " AND DATE(ord_date) <= ?";
+            $params[] = $request->date_to;
+        }
+        
+        $query .= " ORDER BY ord_date DESC";
+        
+        // Only apply LIMIT if no date range is specified
+        if (!$request->has('date_from') && !$request->has('date_to')) {
+            $query .= " LIMIT 100";
+        }
+        
+        $orders = \Illuminate\Support\Facades\DB::select($query, $params);
+
+        $result = [];
+        foreach ($orders as $order) {
+            // Get staff name from staffs table (orders.staff_id references staffs.id)
+            $staff = null;
+            if ($order->staff_id) {
+                // Orders table has foreign key to staffs table, not users table
+                // Try to get from staffs table first (staffs table has 'full_name' column)
+                $staff = \Illuminate\Support\Facades\DB::select("
+                    SELECT full_name as name FROM staffs WHERE id = ?
+                ", [$order->staff_id]);
+                
+                // If not found in staffs, try users table as fallback (users table has 'name' column)
+                if (empty($staff) || !isset($staff[0]->name)) {
+                    $staff = \Illuminate\Support\Facades\DB::select("
+                        SELECT name FROM users WHERE id = ?
+                    ", [$order->staff_id]);
+                }
+            }
+
+            // Get customer name
+            $customer = null;
+            if ($order->cus_id) {
+                $customer = \Illuminate\Support\Facades\DB::select("
+                    SELECT cus_name FROM customers WHERE id = ?
+                ", [$order->cus_id]);
+            }
+
+            // Get real order_details from database
+            $details = \Illuminate\Support\Facades\DB::select("
+                SELECT 
+                    pro_code,
+                    pro_name,
+                    qty,
+                    price,
+                    amount
+                FROM order_details
+                WHERE ord_code = ?
+                ORDER BY pro_name
+            ", [$order->id]);
+
+            $processedDetails = [];
+            foreach ($details as $detail) {
+                $processedDetails[] = [
+                    'pro_name' => $detail->pro_name ?? 'Unknown Product',
+                    'qty' => intval($detail->qty ?? 0),
+                    'amount' => floatval($detail->amount ?? 0),
+                    'price' => floatval($detail->price ?? 0)
+                ];
+            }
+
+            // If no details, create a general entry
+            if (empty($processedDetails)) {
+                $processedDetails[] = [
+                    'pro_name' => 'General Order',
+                    'qty' => 1,
+                    'amount' => floatval($order->total ?? 0),
+                    'price' => floatval($order->total ?? 0)
+                ];
+            }
+
+            // Calculate payment status
+            $payments = \Illuminate\Support\Facades\DB::select("
+                SELECT SUM(deposit) as total_paid FROM payments WHERE ord_code = ?
+            ", [$order->id]);
+            
+            $totalPaid = floatval($payments[0]->total_paid ?? 0);
+            $totalAmount = floatval($order->total ?? 0);
+            
+            $paymentStatus = 'unpaid';
+            if ($totalPaid >= $totalAmount) {
+                $paymentStatus = 'paid';
+            } elseif ($totalPaid > 0) {
+                $paymentStatus = 'partial';
+            }
+
+            // Get staff name with proper fallback
+            // Orders table stores staff full_name directly in full_name column
+            $staffName = 'Unknown Staff';
+            if ($staff && !empty($staff) && isset($staff[0]) && isset($staff[0]->name)) {
+                $staffName = $staff[0]->name;
+            } elseif (isset($order->full_name) && $order->full_name && $order->full_name !== 'Import from' && trim($order->full_name) !== '') {
+                // Use full_name from orders table (this is the staff name stored when order was created)
+                $staffName = $order->full_name;
+            } elseif (isset($order->staff_name) && $order->staff_name && $order->staff_name !== 'Import from') {
+                $staffName = $order->staff_name;
+            }
+            
+            // Ensure we don't use invalid staff names
+            if ($staffName === 'Import from' || empty($staffName) || trim($staffName) === '') {
+                $staffName = 'Unknown Staff';
+            }
+            
+            $result[] = [
+                'id' => $order->id,
+                'ord_date' => $order->ord_date,
+                'cus_name' => $customer ? ($customer[0]->cus_name ?? 'Unknown Customer') : ($order->cus_name ?? 'Unknown Customer'),
+                'staff_name' => $staffName,
+                'total' => $totalAmount,
+                'payment_status' => $paymentStatus,
+                'status' => $order->status ?? 'completed',
+                'order_details' => $processedDetails
+            ];
+        }
+
+        \Log::info('Fast Sales Report Results:', [
+            'count' => count($result),
+            'sample' => $result[0] ?? null
+        ]);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $result
+        ]);
+    } catch (\Exception $e) {
+        \Log::error('Fast Sales Report Error:', [
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage(),
+            'data' => [],
+            'error_details' => [
+                'file' => basename($e->getFile()),
+                'line' => $e->getLine()
+            ]
+        ]);
+    }
 });
 
 /*

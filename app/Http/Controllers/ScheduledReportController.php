@@ -16,12 +16,23 @@ class ScheduledReportController extends Controller
     public function bestSellingProducts(Request $request)
     {
         try {
-            $period = $request->get('period', 'daily'); // daily, weekly, monthly, yearly
             $limit = $request->get('limit', 10);
-
-            // Calculate date range based on period
-            $startDate = $this->getStartDate($period);
-            $endDate = Carbon::now();
+            
+            // Support both date_from/date_to and period parameters
+            $dateFrom = $request->get('date_from');
+            $dateTo = $request->get('date_to');
+            
+            if ($dateFrom && $dateTo) {
+                // Use provided date range
+                $startDate = Carbon::parse($dateFrom)->startOfDay();
+                $endDate = Carbon::parse($dateTo)->endOfDay();
+                $period = 'custom';
+            } else {
+                // Fall back to period-based calculation
+                $period = $request->get('period', 'daily'); // daily, weekly, monthly, yearly
+                $startDate = $this->getStartDate($period);
+                $endDate = Carbon::now();
+            }
 
             // Get best selling products
             $bestSellingProducts = OrderDetail::join('orders', 'order_details.ord_code', '=', 'orders.id')
