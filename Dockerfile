@@ -7,13 +7,13 @@ RUN apt-get update && apt-get install -y \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install gd pdo pdo_mysql zip
 
-# Enable Apache mod_rewrite
+# Enable Apache rewrite
 RUN a2enmod rewrite
 
 WORKDIR /var/www/html
 
-# Copy composer files first
-COPY composer.json composer.lock ./
+# Copy entire project FIRST (so artisan exists)
+COPY . .
 
 # Install Composer
 RUN curl -sS https://getcomposer.org/installer | php -- \
@@ -22,10 +22,7 @@ RUN curl -sS https://getcomposer.org/installer | php -- \
 # Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader
 
-# Copy the rest of the project
-COPY . .
-
-# Set permissions for Laravel
+# Set Laravel permissions
 RUN chown -R www-data:www-data storage bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache
 
