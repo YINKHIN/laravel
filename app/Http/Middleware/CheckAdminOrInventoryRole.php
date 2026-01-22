@@ -46,7 +46,7 @@ class CheckAdminOrInventoryRole
         $userType = $user->type ?? $user->getAttribute('type') ?? null;
         
         // Allow admin, manager, and inventory_staff
-        $allowedTypes = ['admin', 'manager', 'inventory_staff'];
+        $allowedTypes = ['admin', 'manager', 'inventory'];
         
         if (!$userType || !in_array($userType, $allowedTypes)) {
             return response()->json([
